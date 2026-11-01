@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Tesla Player</title>
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1c1c1e">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Player">
+<link rel="stylesheet" href="style.css">
+<script src="vendor/hls.min.js"></script>
+<script src="vendor/mpegts.js"></script>
+</head>
+<body>
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="iptv">IPTV / M3U</button>
+  <button class="tab-btn" data-tab="jellyfin">Jellyfin</button>
+  <button class="tab-btn" data-tab="mediaplayer">Media Player</button>
+</div>
+
+<div id="iptv" class="tab-content active">
+  <button class="drawer-toggle" data-target="iptv">☰ Liste</button>
+  <div class="side-panel" id="iptv-side-panel">
+    <div class="mode-switch">
+      <button id="mode-m3u-btn" class="mode-btn active">M3U</button>
+      <button id="mode-xtream-btn" class="mode-btn">Xtream</button>
+    </div>
+
+    <div id="m3u-mode">
+      <h3>M3U Kaynağı</h3>
+      <input id="m3u-url" placeholder="https://.../liste.m3u">
+      <button id="m3u-load-btn">Linkten Yükle</button>
+      <p class="or-text">veya dosya seçin</p>
+      <input type="file" id="m3u-file" accept=".m3u,.m3u8">
+      <button id="m3u-file-load-btn">Dosyadan Yükle</button>
+      <h3>Kanal Listesi</h3>
+      <div id="m3u-channel-list"></div>
+    </div>
+
+    <div id="xtream-mode" style="display:none;">
+      <div class="xtream-section-switch">
+        <button class="xt-sec-btn fav-tab" data-sec="fav">★ Favoriler</button>
+        <button class="xt-sec-btn active" data-sec="live">Canlı TV</button>
+        <button class="xt-sec-btn" data-sec="vod">Filmler</button>
+        <button class="xt-sec-btn" data-sec="series">Diziler</button>
+      </div>
+      <div id="xt-breadcrumb"></div>
+      <div id="xt-list"></div>
+    </div>
+  </div>
+  <div class="player-panel" id="iptv-player-panel">
+    <button class="fullscreen-btn" data-target="iptv-player-panel">⛶</button>
+    <video id="iptv-video" controls autoplay playsinline></video>
+    <div id="iptv-status" class="player-status"></div>
+  </div>
+</div>
+
+<div id="jellyfin" class="tab-content">
+  <iframe id="jellyfin-frame" src="" allowfullscreen></iframe>
+</div>
+
+<div id="mediaplayer" class="tab-content">
+  <button class="drawer-toggle" data-target="mediaplayer">☰ Liste</button>
+  <div class="mp-layout">
+    <div class="mp-browser" id="mp-side-panel">
+      <div id="mp-breadcrumb"></div>
+      <div id="mp-list"></div>
+    </div>
+    <div class="mp-player" id="mp-player-panel">
+      <button class="fullscreen-btn" data-target="mp-player-panel">⛶</button>
+      <video id="mp-video" controls></video>
+      <audio id="mp-audio" controls></audio>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="app.js"></script>
+</body>
+</html>

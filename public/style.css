@@ -1,0 +1,277 @@
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  height: 100%;
+}
+body {
+  background: #0d0d0d;
+  color: #eee;
+  font-family: -apple-system, Arial, sans-serif;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.tab-bar {
+  display: flex;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  flex-shrink: 0;
+}
+.tab-btn {
+  flex: 1;
+  padding: 14px 6px;
+  background: transparent;
+  color: #ccc;
+  border: none;
+  border-bottom: 3px solid transparent;
+  font-size: 14px;
+  cursor: pointer;
+}
+.tab-btn.active {
+  color: #fff;
+  border-bottom-color: #2b7cff;
+  background: #222;
+}
+.tab-content {
+  display: none;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+.tab-content.active {
+  display: flex;
+}
+#iptv { flex-direction: row; }
+.side-panel {
+  width: 340px;
+  background: #141414;
+  padding: 16px;
+  overflow-y: auto;
+  border-right: 1px solid #333;
+  flex-shrink: 0;
+}
+.side-panel h3 { margin-top: 0; }
+.side-panel input {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 10px;
+  border-radius: 6px;
+  border: 1px solid #444;
+  background: #0d0d0d;
+  color: #eee;
+}
+.side-panel button {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 12px;
+  border: none;
+  border-radius: 6px;
+  background: #2b7cff;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+.or-text { text-align: center; color: #888; font-size: 12px; margin: 8px 0; }
+
+.mode-switch, .xtream-section-switch {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+}
+.mode-btn, .xt-sec-btn {
+  flex: 1;
+  padding: 8px;
+  background: #1e1e1e;
+  color: #ccc;
+  border: 1px solid #333;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.mode-btn.active, .xt-sec-btn.active {
+  background: #2b7cff;
+  color: #fff;
+  border-color: #2b7cff;
+}
+
+#xt-breadcrumb { color: #999; font-size: 13px; margin-bottom: 10px; cursor: pointer; }
+
+.channel-item, .mp-item, .xt-item {
+  padding: 10px;
+  margin-bottom: 6px;
+  background: #1e1e1e;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.channel-item.playing, .xt-item.playing { background: #2b7cff55; }
+.channel-item:hover, .mp-item:hover, .xt-item:hover { background: #2b7cff33; }
+.xt-item img { width: 28px; height: 28px; object-fit: cover; border-radius: 4px; }
+
+.player-panel {
+  flex: 1;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-width: 0;
+}
+.player-panel video { width: 100%; height: 100%; }
+
+.fullscreen-btn {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.55);
+  color: #fff;
+  border: 1px solid #555;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.drawer-toggle {
+  display: none;
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 20;
+  padding: 8px 14px;
+  background: rgba(30,30,30,0.9);
+  color: #fff;
+  border: 1px solid #444;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+#jellyfin, #jellyfin iframe { width: 100%; height: 100%; border: none; }
+
+.mp-layout { display: flex; width: 100%; }
+.mp-browser {
+  width: 320px;
+  background: #141414;
+  padding: 16px;
+  overflow-y: auto;
+  border-right: 1px solid #333;
+  flex-shrink: 0;
+}
+#mp-breadcrumb { margin-bottom: 10px; color: #999; font-size: 13px; }
+.mp-player {
+  flex: 1;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-width: 0;
+}
+.mp-player video, .mp-player audio { width: 100%; max-height: 100%; display: none; }
+
+/* PLATFORM: TESLA */
+body.platform-tesla .tab-btn { font-size: 20px; padding: 20px 10px; }
+body.platform-tesla .side-panel,
+body.platform-tesla .mp-browser { width: 400px; }
+body.platform-tesla .mode-btn,
+body.platform-tesla .xt-sec-btn { padding: 14px; font-size: 16px; }
+body.platform-tesla .channel-item,
+body.platform-tesla .mp-item,
+body.platform-tesla .xt-item { padding: 16px; font-size: 17px; }
+body.platform-tesla .side-panel input,
+body.platform-tesla .side-panel button { padding: 14px; font-size: 16px; }
+body.platform-tesla .fullscreen-btn { width: 52px; height: 52px; font-size: 22px; }
+body.platform-tesla .drawer-toggle { display: none; }
+
+/* PLATFORM: MOBILE (iPhone + iPad) */
+body.platform-mobile .drawer-toggle { display: block; }
+body.platform-mobile .side-panel,
+body.platform-mobile .mp-browser {
+  position: absolute; top: 0; left: 0; bottom: 0;
+  width: 82%; max-width: 340px; z-index: 15;
+  transform: translateX(-100%); transition: transform 0.25s ease;
+  box-shadow: 4px 0 12px rgba(0,0,0,0.5);
+}
+body.platform-mobile .side-panel.open,
+body.platform-mobile .mp-browser.open { transform: translateX(0); }
+body.platform-mobile .player-panel,
+body.platform-mobile .mp-player { width: 100%; }
+
+/* Güvenlik ağı */
+@media (max-width: 860px) {
+  body:not(.platform-tesla):not(.platform-desktop) .drawer-toggle { display: block; }
+  body:not(.platform-tesla):not(.platform-desktop) .side-panel,
+  body:not(.platform-tesla):not(.platform-desktop) .mp-browser {
+    position: absolute; top: 0; left: 0; bottom: 0;
+    width: 82%; max-width: 340px; z-index: 15;
+    transform: translateX(-100%); transition: transform 0.25s ease;
+    box-shadow: 4px 0 12px rgba(0,0,0,0.5);
+  }
+  body:not(.platform-tesla):not(.platform-desktop) .side-panel.open,
+  body:not(.platform-tesla):not(.platform-desktop) .mp-browser.open {
+    transform: translateX(0);
+  }
+}
+
+
+/* Oynatıcı durum etiketi (yükleniyor / uyumluluk modu) */
+.player-status {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 10;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(0,0,0,0.6);
+  color: #ddd;
+  font-size: 13px;
+  pointer-events: none;
+  display: none;
+}
+.player-status.show { display: block; }
+body.platform-tesla .player-status { font-size: 16px; padding: 8px 12px; }
+
+/* Liste otomatik gizlenme (masaüstü + Tesla: panel daralır, video büyür) */
+.side-panel, .mp-browser { transition: width 0.3s ease, padding 0.3s ease, transform 0.25s ease; }
+body:not(.platform-mobile) .side-panel.collapsed,
+body:not(.platform-mobile) .mp-browser.collapsed {
+  width: 0 !important;
+  padding-left: 0;
+  padding-right: 0;
+  border-right: none;
+  overflow: hidden;
+}
+.drawer-toggle.hidden-by-drawer { display: none !important; }
+
+/* Favoriler */
+.channel-item, .xt-item { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; position: relative; transition: transform 0.15s ease, background 0.15s ease; }
+.channel-item.pressing, .xt-item.pressing { transform: scale(0.97); background: #2b7cff44; }
+.fav-star { margin-left: auto; color: #f5c518; font-size: 16px; }
+.fav-category { color: #f5c518; font-weight: 600; border: 1px solid #f5c51855; }
+.list-heading { color: #999; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; margin: 10px 0 6px; }
+.side-panel .hint { color: #999; font-size: 13px; line-height: 1.4; }
+.toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%) translateY(20px);
+  background: rgba(30,30,30,0.95); color: #fff; padding: 10px 16px; border-radius: 10px; border: 1px solid #444;
+  font-size: 14px; z-index: 100; opacity: 0; pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+body.platform-tesla .fav-star { font-size: 20px; }
+body.platform-tesla .toast { font-size: 18px; padding: 14px 20px; }
+.xt-sec-btn.fav-tab { color: #f5c518; }
+.xt-sec-btn.fav-tab.active { background: #f5c518; color: #111; border-color: #f5c518; }
+.xtream-section-switch { flex-wrap: wrap; }
+
+/* Favori sıralama (basılı tut + sürükle) */
+.xt-item.lifted, .channel-item.lifted {
+  transform: scale(1.03); background: #2b7cff55; box-shadow: 0 6px 18px rgba(0,0,0,0.6); z-index: 5;
+  outline: 1px solid #2b7cff;
+}
+.xt-item.dragging, .channel-item.dragging { opacity: 0.95; cursor: grabbing; }
+body.fav-dragging .side-panel { overscroll-behavior: contain; }

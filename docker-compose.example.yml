@@ -1,0 +1,41 @@
+services:
+  tesla-player:
+    image: berzahbey/tesla-player:latest
+    pull_policy: always
+    container_name: tesla-player
+    restart: unless-stopped
+    ports:
+      - "8098:3000"
+    environment:
+      - MEDIA_ROOT=/media
+      - JELLYFIN_URL=https://j.dedplay.nl
+      - XTREAM_SERVER=http://SUNUCU_ADRESI:PORT
+      - XTREAM_USERNAME=kullanici_adiniz
+      - XTREAM_PASSWORD=sifreniz
+    # Intel GPU: 4K/HEVC kanalları donanımla dönüştürmek için (yoksa bu iki satırı silin)
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      # Video/müzik klasörünüz (Media Player sekmesi)
+      - /DATA/Media:/media:ro
+      # Ayarlar ve kayıtlar (silinmez, güncellemede korunur)
+      - /DATA/AppData/tesla-player/data:/app/data
+
+x-casaos:
+  architectures:
+    - amd64
+  main: tesla-player
+  icon: https://raw.githubusercontent.com/berzahbey/Tesla-player/main/icon.png
+  title:
+    en_us: Tesla Player
+    tr: Tesla Player
+  tagline:
+    en_us: All-in-one IPTV, Xtream, Jellyfin and media player for your Tesla
+    tr: Tesla için hepsi bir arada IPTV, Xtream, Jellyfin ve medya oynatıcı
+  description:
+    en_us: Combines IPTV/M3U, Xtream Codes (Live TV, Movies, Series), Jellyfin and a personal media folder player in one tab-based web app, with automatic layout for Tesla, mobile and desktop.
+    tr: IPTV/M3U, Xtream Codes (Canlı TV, Film, Dizi), Jellyfin ve kişisel medya klasörü oynatıcısını sekmeli tek bir web uygulamasında birleştirir; Tesla, mobil ve masaüstü için otomatik arayüz uyumu sağlar.
+  author: berzahbey
+  developer: berzahbey
+  category: Media
+  port_map: "8098"
