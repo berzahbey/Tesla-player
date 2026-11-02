@@ -792,7 +792,9 @@ function buildArgs({ input, isRemote, live, transcode, hw, dir, lowres }) {
   }
   args.push('-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-f', 'hls');
   if (live) {
-    args.push('-hls_time', '6', '-hls_list_size', '15', '-hls_delete_threshold', '10',
+    // Dönüştürmede her 1 sn'de anahtar kare var: 1 sn'lik parçalar -> oynatıcı 2-3 sn'de başlar
+    // (Safari/hls.js canlıda ~3 parça bekliyor; 6 sn'lik parçalarda bu ~18 sn ediyordu)
+    args.push('-hls_time', transcode ? '1' : '6', '-hls_list_size', transcode ? '40' : '15', '-hls_delete_threshold', '10',
       '-hls_flags', 'delete_segments+independent_segments+omit_endlist');
   } else {
     args.push('-hls_time', '6', '-hls_list_size', '0', '-hls_playlist_type', 'event',
@@ -855,7 +857,12 @@ async function runFfmpeg(session, opts) {
       // Parça sayısı değil, hazır yayın süresi önemli (kopyalamada parça boyu kaynağa bağlı)
       const pl = fs.readFileSync(playlistPath, 'utf-8');
       const secs = (pl.match(/#EXTINF:([\d.]+)/g) || []).reduce((a, x) => a + parseFloat(x.slice(8)), 0);
-      if (pl.includes('.ts') && secs >= (opts.live ? 5 : 0)) { session.ready = true; return true; }
+      const need = opts.live ? (opts.transcode ? 3 : 5) : 0;
+      if (pl.includes('.ts') && secs >= need) {
+        session.ready = true;
+        console.log(`${tag} hazır: ${((Date.now() - started) / 1000).toFixed(1)}sn (${secs.toFixed(0)} sn yayın)`);
+        return true;
+      }
     }
     if (session.exited) return false;
     if (session.cancelled) return false;
