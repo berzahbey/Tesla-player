@@ -155,9 +155,10 @@ function dbgHls(h, label) {
 })();
 
 function setStatus(text) {
-  if (text) dbg(`ekran yazısı: "${text}"`);
-  statusEl.textContent = text || '';
-  statusEl.classList.toggle('show', !!text);
+  // Ekranda yazı gösterilmiyor (kullanıcı istemedi); mesaj sadece sunucu loguna gider
+  if (text) dbg(`ekran yazısı (gösterilmedi): "${text}"`);
+  statusEl.textContent = '';
+  statusEl.classList.remove('show');
 }
 
 function isAppleNative() {
@@ -273,7 +274,7 @@ function startBlackScreenWatchdog(onBlack) {
 async function playViaSession(src, { live, mode, key, label, retried, low }) {
   const token = playToken;
   low = low || lowResDevice;
-  setStatus(mode === 'copy' ? 'Hazırlanıyor…' : '4K hazırlanıyor…');
+  setStatus('');
   try {
     const q = new URLSearchParams({ src, live: live ? '1' : '0', mode: mode || 'auto' });
     if (low) q.set('q', '720');
@@ -300,7 +301,7 @@ async function playViaSession(src, { live, mode, key, label, retried, low }) {
       appState.transcodeKeys = [...(appState.transcodeKeys || []), key];
       saveStateField('/api/state/transcode-key', { key });
     }
-    setStatus(data.transcoded ? '4K → 720p' : '');
+    setStatus('');
     if (data.transcoded) setTimeout(() => { if (token === playToken) setStatus(''); }, 4000);
     // 1080p çıktıyı bu cihaz çözemezse 720p ile tekrar aç
     if (!low) onDecodeError = () => {
