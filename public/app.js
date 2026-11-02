@@ -388,6 +388,23 @@ function playXtreamLive(item) {
   const url = item.url;
   if (url.includes('.m3u8') && supportsNativeHls() && isAppleNative()) {
     dbg('oynatıcı: tarayıcının kendi HLS (doğrudan kanal)');
+    // Safari HEVC'li veya uyumsuz sesli (AC3/MP2) .ts parçalarını çözemiyor ve hls.js gibi
+    // nedenini söylemiyor: "Media failed to decode" verip duruyor. O zaman sunucuya geç.
+    let sentToServer = false;
+    const toServer = (why, mode) => {
+      if (sentToServer || token !== playToken) return;
+      sentToServer = true;
+      dbg(`Safari: ${why} -> sunucu akışına geçiliyor`);
+      stopPlayback();
+      playViaSession(item.url, { live: true, mode, key, label: item.name });
+    };
+    onDecodeError = () => toServer('çözme hatası', 'transcode');
+    // Hata da vermeden 12 sn'de hiç kare gelmezse: sunucu bakıp gerekirse dönüştürsün
+    setTimeout(() => {
+      if (token !== playToken || sentToServer) return;
+      const q = iptvVideo.getVideoPlaybackQuality ? iptvVideo.getVideoPlaybackQuality() : {};
+      if (!(q.totalVideoFrames > 0) && iptvVideo.currentTime < 0.5) toServer('12 sn görüntü yok', 'auto');
+    }, 12000);
     iptvVideo.src = url;
   } else if (url.includes('.m3u8') && Hls.isSupported()) {
     dbg('oynatıcı: hls.js (doğrudan kanal)');
