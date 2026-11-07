@@ -351,6 +351,52 @@ function canDecodeHevc() {
   return MS.isTypeSupported('video/mp4; codecs="hvc1.1.6.L153.B0"') || MS.isTypeSupported('video/mp4; codecs="hev1.1.6.L153.B0"');
 }
 
+// hls.js 1.6+ TS içindeki HEVC'yi açabiliyor (1.5 "Unsupported HEVC in M2TS" diyordu).
+// Tarayıcı 4K HEVC çözebiliyorsa (Mac/iPhone Safari) 4K kanal sunucuda çevrilmeden oynar.
+function hevcDirectOk() {
+  if (typeof Hls === 'undefined' || !Hls.isSupported()) return false;
+  // Android Chrome "destekliyorum" diyor ama tablet/telefon donanımı 4K HEVC'yi çoğu zaman çözemiyor
+  if (/Android/i.test(navigator.userAgent)) return false;
+  const MS = window.ManagedMediaSource || window.MediaSource;
+  if (!MS) return false;
+  return MS.isTypeSupported('video/mp4; codecs="hvc1.1.6.L153.B0"') || MS.isTypeSupported('video/mp4; codecs="hev1.1.6.L153.B0"');
+}
+
+// 4K/HEVC kanalı doğrudan aç; görüntü çözülemezse sunucu dönüştürmesine geç ve bu cihazda hatırla
+function playHevcDirect(item, key) {
+  const token = playToken;
+  dbg('oynatıcı: hls.js (4K/HEVC doğrudan)');
+  let fellBack = false;
+  const fallback = (why, codec) => {
+    if (fellBack || token !== playToken) return;
+    fellBack = true;
+    dbg(`4K doğrudan olmadı (${why}) -> sunucu dönüştürmesi`);
+    if (codec) {
+      const fails = lsGet('tp-hevc-fail', []);
+      if (!fails.includes(key)) { fails.push(key); if (fails.length > 300) fails.shift(); lsSet('tp-hevc-fail', fails); }
+    }
+    stopPlayback();
+    playViaSession(item.url, { live: true, mode: 'transcode', key, label: item.name });
+  };
+  hls = new Hls();
+  dbgHls(hls, 'kanal-4k');
+  hls.on(Hls.Events.BUFFER_CODECS, (_, data) => { if (!data.video) fallback('görüntü izi yok', true); });
+  hls.on(Hls.Events.ERROR, (_, data) => {
+    const codecErr = /codec|parsing/i.test(data.details || '') || data.type === 'mediaError';
+    if (codecErr && (data.fatal || /Codec/.test(data.details || ''))) fallback(data.details, true);
+    else if (data.fatal) fallback(data.details, false);
+  });
+  onDecodeError = () => fallback('çözme hatası', true);
+  setTimeout(() => {
+    if (token !== playToken || fellBack) return;
+    const q = iptvVideo.getVideoPlaybackQuality ? iptvVideo.getVideoPlaybackQuality() : {};
+    if (!(q.totalVideoFrames > 0) && iptvVideo.videoWidth === 0) fallback('12 sn görüntü yok', true);
+  }, 12000);
+  hls.loadSource(item.url);
+  hls.attachMedia(iptvVideo);
+  iptvVideo.play().catch(() => {});
+}
+
 let currentLiveItem = null;
 
 // ===== Düşük çözünürlük cihazı: 1080p H.264'ü çözemeyen cihazlar (ör. Android 10 tablet) =====
@@ -377,7 +423,12 @@ function playXtreamLive(item) {
   saveStateField('/api/state/last-channel', { name: item.name, url: item.url, tsUrl: item.tsUrl || '', key, xtream: true });
 
   dbg(`kanal: "${item.name}"`);
-  // 4K/UHD (HEVC): tarayıcı oynatamıyor -> doğrudan sunucuda 1080p'ye dönüştür (çalıştığı doğrulandı)
+  // 4K/UHD (HEVC): cihaz çözebiliyorsa doğrudan, tam kalitede (bu cihazda daha önce olmadıysa)
+  if (looksLike4K(item.name) && hevcDirectOk() && !lsGet('tp-hevc-fail', []).includes(key)) {
+    playHevcDirect(item, key);
+    return;
+  }
+  // 4K/UHD (HEVC) ama cihaz çözemiyor -> sunucuda dönüştür
   if ((appState.transcodeKeys || []).includes(key) || looksLike4K(item.name) || (lowResDevice && lowResKeys.includes(key))) {
     playViaSession(item.url, { live: true, mode: 'transcode', key, label: item.name });
     return;
@@ -434,6 +485,8 @@ function playXtreamLive(item) {
     hls.on(Hls.Events.ERROR, (_, data) => {
       const why = String(data.reason || (data.error && data.error.message) || '');
       if (data.details === 'fragParsingError' && /HEVC|H\.?265/i.test(why)) toServer();
+      // hls.js 1.6+ HEVC'yi ayrıştırıyor; cihaz çözemezse kodek/medya hatası olarak geliyor
+      else if (/Codec/.test(data.details || '') || (data.fatal && data.type === 'mediaError')) toServer();
     });
     hls.loadSource(url);
     hls.attachMedia(iptvVideo);

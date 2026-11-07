@@ -5,9 +5,9 @@
   "main": "server.js",
   "dependencies": {
     "express": "^4.19.2",
-    "hls.js": "^1.5.13",
+    "hls.js": "1.7.3",
     "mime-types": "^2.1.35",
-    "mpegts.js": "^1.7.3",
+    "mpegts.js": "1.8.2",
     "multer": "^1.4.5-lts.1"
   }
 }
