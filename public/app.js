@@ -363,9 +363,9 @@ function hevcDirectOk() {
 }
 
 // 4K/HEVC kanalı doğrudan aç; görüntü çözülemezse sunucu dönüştürmesine geç ve bu cihazda hatırla
-function playHevcDirect(item, key) {
+function playHevcDirect(item, key, attempt = 0) {
   const token = playToken;
-  dbg('oynatıcı: hls.js (4K/HEVC doğrudan)');
+  dbg(`oynatıcı: hls.js (4K/HEVC doğrudan)${attempt ? ' tekrar ' + attempt : ''}`);
   let fellBack = false;
   const fallback = (why, codec) => {
     if (fellBack || token !== playToken) return;
@@ -384,6 +384,14 @@ function playHevcDirect(item, key) {
   hls.on(Hls.Events.ERROR, (_, data) => {
     const codecErr = /codec|parsing/i.test(data.details || '') || data.type === 'mediaError';
     if (codecErr && (data.fatal || /Codec/.test(data.details || ''))) fallback(data.details, true);
+    // Sağlayıcı kanal değişiminde eski oturumu birkaç sn bırakmıyor (tek bağlantı): bekle, doğrudan tekrar dene
+    else if (data.fatal && data.type === 'networkError' && attempt < 2) {
+      if (fellBack || token !== playToken) return;
+      fellBack = true;
+      dbg(`4K ağ hatası (${data.details}) -> ${attempt ? 3 : 1.5} sn sonra tekrar`);
+      if (hls) { hls.destroy(); hls = null; }
+      setTimeout(() => { if (token === playToken) playHevcDirect(item, key, attempt + 1); }, attempt ? 3000 : 1500);
+    }
     else if (data.fatal) fallback(data.details, false);
   });
   onDecodeError = () => fallback('çözme hatası', true);
