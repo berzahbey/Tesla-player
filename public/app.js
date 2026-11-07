@@ -381,7 +381,15 @@ function playHevcDirect(item, key, attempt = 0) {
   hls = new Hls();
   dbgHls(hls, 'kanal-4k');
   hls.on(Hls.Events.BUFFER_CODECS, (_, data) => { if (!data.video) fallback('görüntü izi yok', true); });
+  let mediaRecovered = false;
   hls.on(Hls.Events.ERROR, (_, data) => {
+    // Ölümcül medya hatasında bir kez hls.js'in kendi kurtarmasını dene (Safari ilk açılışta MediaSource'u kapatabiliyor)
+    if (data.fatal && data.type === 'mediaError' && !mediaRecovered && hls && token === playToken && !fellBack) {
+      mediaRecovered = true;
+      dbg(`4K medya hatası (${data.details}) -> kurtarma deneniyor`);
+      hls.recoverMediaError();
+      return;
+    }
     const codecErr = /codec|parsing/i.test(data.details || '') || data.type === 'mediaError';
     if (codecErr && (data.fatal || /Codec/.test(data.details || ''))) fallback(data.details, true);
     // Sağlayıcı kanal değişiminde eski oturumu birkaç sn bırakmıyor (tek bağlantı): bekle, doğrudan tekrar dene
@@ -394,7 +402,18 @@ function playHevcDirect(item, key, attempt = 0) {
     }
     else if (data.fatal) fallback(data.details, false);
   });
-  onDecodeError = () => fallback('çözme hatası', true);
+  const onDecode = () => {
+    if (token !== playToken || fellBack) return;
+    if (!mediaRecovered && hls) {
+      mediaRecovered = true;
+      dbg('4K çözme hatası -> kurtarma deneniyor');
+      onDecodeError = onDecode;
+      hls.recoverMediaError();
+      return;
+    }
+    fallback('çözme hatası', true);
+  };
+  onDecodeError = onDecode;
   setTimeout(() => {
     if (token !== playToken || fellBack) return;
     const q = iptvVideo.getVideoPlaybackQuality ? iptvVideo.getVideoPlaybackQuality() : {};
