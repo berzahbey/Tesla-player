@@ -53,16 +53,39 @@ document.querySelectorAll('.drawer-toggle').forEach(btn => {
   });
 });
 
+// Tam ekran: sadece oynatıcıyı değil bütün sekmeyi (liste + oynatıcı) tam ekrana al ki dokununca liste gelebilsin.
+// iPhone Safari'de öğe tam ekranı yok -> sayfa içi tam ekran (sekme çubuğu gizlenir, oynatıcı ekranı kaplar).
+function fsElement() { return document.fullscreenElement || document.webkitFullscreenElement || null; }
 document.querySelectorAll('.fullscreen-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    const panel = document.getElementById(btn.dataset.target);
-    if (!document.fullscreenElement) {
-      panel.requestFullscreen().catch(() => {});
+    const target = btn.closest('.tab-content') || document.getElementById(btn.dataset.target);
+    const req = target.requestFullscreen || target.webkitRequestFullscreen;
+    if (document.body.classList.contains('pseudo-fs')) {
+      document.body.classList.remove('pseudo-fs');
+    } else if (fsElement()) {
+      (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    } else if (req) {
+      const r = req.call(target);
+      if (r && r.catch) r.catch(() => document.body.classList.add('pseudo-fs'));
     } else {
-      document.exitFullscreen();
+      document.body.classList.add('pseudo-fs');
     }
   });
 });
+// body.fs-on: gerçek tam ekran, sayfa içi tam ekran ya da iPhone yan çevrilmiş
+const landscapeMq = window.matchMedia('(orientation: landscape) and (max-height: 540px)');
+function syncFs() {
+  const on = !!fsElement() || document.body.classList.contains('pseudo-fs') ||
+    (currentPlatform === 'mobile' && landscapeMq.matches);
+  if (on === document.body.classList.contains('fs-on')) return;
+  document.body.classList.toggle('fs-on', on);
+  // Tam ekrana girince/çıkınca liste kapalı başlasın (dokununca açılır)
+  document.querySelectorAll('.side-panel, .mp-browser').forEach(p => p.classList.remove('open'));
+}
+['fullscreenchange', 'webkitfullscreenchange'].forEach(ev => document.addEventListener(ev, syncFs));
+if (landscapeMq.addEventListener) landscapeMq.addEventListener('change', syncFs); else landscapeMq.addListener(syncFs);
+new MutationObserver(syncFs).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+syncFs();
 
 document.getElementById('mode-m3u-btn').addEventListener('click', () => setIptvMode('m3u'));
 document.getElementById('mode-xtream-btn').addEventListener('click', () => setIptvMode('xtream'));
@@ -826,6 +849,7 @@ function xtBreadcrumb(text, onClick) {
 }
 
 function loadXtreamCategories(section) {
+  xtView = { kind: 'cats', section };
   xtBreadcrumb('Kategoriler yükleniyor...');
   const type = section === 'vod' ? 'vod' : section === 'series' ? 'series' : 'live';
   fetch(`/api/xtream/categories?type=${type}`)
@@ -859,7 +883,9 @@ function addXtreamLiveItem(list, item, onToggled, inFavTab) {
   el.className = 'xt-item';
   el.innerHTML = itemHtml(item.icon, item.name, isFav('xtream', item.key));
   if (currentLiveItem && currentLiveItem.key && currentLiveItem.key === item.key) el.classList.add('playing');
+  const fromView = xtView;
   const open = () => {
+    xtPlayingFrom = fromView;
     playXtreamLive(item);
     document.querySelectorAll('.xt-item').forEach(x => x.classList.remove('playing'));
     el.classList.add('playing');
@@ -881,7 +907,24 @@ function addXtreamLiveItem(list, item, onToggled, inFavTab) {
   list.appendChild(el);
 }
 
+// Ekrandaki liste ve izlenen kanalın geldiği liste (tam ekranda o grubun listesi gösterilir)
+let xtView = null;
+let xtPlayingFrom = null;
+function sameView(a, b) { return !!a && !!b && a.kind === b.kind && a.section === b.section && String(a.id) === String(b.id); }
+function restorePlayingList() {
+  if (!xtPlayingFrom || sameView(xtView, xtPlayingFrom) || document.getElementById('xtream-mode').style.display === 'none') return false;
+  const v = xtPlayingFrom;
+  if (v.kind === 'fav') showXtreamFavorites();
+  else loadXtreamItems(v.section, v.id, v.name);
+  return true;
+}
+function scrollToPlaying() {
+  const el = document.querySelector('#iptv-side-panel .xt-item.playing, #iptv-side-panel .channel-item.playing');
+  if (el) el.scrollIntoView({ block: 'center' });
+}
+
 function showXtreamFavorites() {
+  xtView = { kind: 'fav' };
   currentXtSection = 'fav';
   saveStateField('/api/state/xtream-section', { section: 'fav' });
   document.querySelectorAll('.xt-sec-btn').forEach(b => b.classList.toggle('active', b.dataset.sec === 'fav'));
@@ -900,6 +943,7 @@ let xtCurrentCategory = null;
 function loadXtreamItems(section, categoryId, categoryName) {
   if (categoryId !== '__fav__') xtCurrentCategory = { id: String(categoryId), name: categoryName };
   if (categoryId === '__fav__') return showXtreamFavorites();
+  xtView = { kind: 'cat', section, id: String(categoryId), name: categoryName };
   // Son açılan kategoriyi hatırla: sayfa açılınca doğrudan buraya gelinsin
   saveStateField('/api/state/xtream-category', { section, id: categoryId, name: categoryName });
   appState.xtreamCategory = { section, id: String(categoryId), name: categoryName };
@@ -926,6 +970,7 @@ function loadXtreamItems(section, categoryId, categoryName) {
       .then(r => r.json())
       .then(items => {
         list.innerHTML = '';
+        setTimeout(() => { if (document.body.classList.contains('fs-on')) scrollToPlaying(); }, 0);
         items.forEach(item => {
           if (type === 'live') {
             addXtreamLiveItem(list, item, el => {
@@ -1121,7 +1166,7 @@ function playAudio(p) {
 
 // ===== Kanal listesi: oynatma başlayınca gizle, ekrana dokununca/tıklayınca geri getir =====
 const LIST_HIDE_DELAY = 4000;
-function setupAutoHideList(panelId, playerId, videoId, tabId) {
+function setupAutoHideList(panelId, playerId, videoId, tabId, onShow) {
   const panel = document.getElementById(panelId);
   const toggleBtn = document.querySelector(`.drawer-toggle[data-target="${tabId}"]`);
   // Çekmece açıkken "Liste" butonu kanalların üstüne binmesin
@@ -1146,9 +1191,12 @@ function setupAutoHideList(panelId, playerId, videoId, tabId) {
       if (!hovering && !video.paused && !panel.contains(document.activeElement)) hide();
     }, delay);
   };
+  let openedAt = 0;
   const show = () => {
+    const wasHidden = isHidden();
     if (isDrawer()) panel.classList.add('open');
     else panel.classList.remove('collapsed');
+    if (wasHidden) { openedAt = Date.now(); if (onShow) onShow(); }
     schedule();
   };
 
@@ -1161,7 +1209,8 @@ function setupAutoHideList(panelId, playerId, videoId, tabId) {
   player.addEventListener('pointerdown', e => {
     if (e.target.closest('.fullscreen-btn')) return;
     if (isHidden()) show();
-    else if (isDrawer()) { clearTimeout(timer); hide(); }
+    // Fare hareketiyle az önce açıldıysa aynı tıklama listeyi geri kapatmasın
+    else if (isDrawer() && !(e.pointerType === 'mouse' && Date.now() - openedAt < 1500)) { clearTimeout(timer); hide(); }
     else schedule();
   });
   // Mac/PC: fare video üstünde hareket edince de liste gelsin (tıklayıp videoyu durdurmaya gerek yok)
@@ -1185,7 +1234,11 @@ function setupAutoHideList(panelId, playerId, videoId, tabId) {
 }
 
 const listCtl = {
-  iptv: setupAutoHideList('iptv-side-panel', 'iptv-player-panel', 'iptv-video', 'iptv'),
+  iptv: setupAutoHideList('iptv-side-panel', 'iptv-player-panel', 'iptv-video', 'iptv', () => {
+    // Tam ekranda: izlenen kanalın grubunun listesi, izlenen kanal ortada
+    if (!document.body.classList.contains('fs-on')) return;
+    if (!restorePlayingList()) scrollToPlaying();
+  }),
   mediaplayer: setupAutoHideList('mp-side-panel', 'mp-player-panel', 'mp-video', 'mediaplayer')
 };
 

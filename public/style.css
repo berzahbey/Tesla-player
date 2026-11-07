@@ -8,6 +8,7 @@ body {
   color: #eee;
   font-family: -apple-system, Arial, sans-serif;
   height: 100vh;
+  height: 100dvh;
   display: flex;
   flex-direction: column;
   padding-top: env(safe-area-inset-top, 0px);
@@ -275,3 +276,26 @@ body.platform-tesla .toast { font-size: 18px; padding: 14px 20px; }
 }
 .xt-item.dragging, .channel-item.dragging { opacity: 0.95; cursor: grabbing; }
 body.fav-dragging .side-panel { overscroll-behavior: contain; }
+
+/* Tam ekran (gerçek tam ekran, iPhone sayfa içi tam ekran ya da iPhone yatay): body.fs-on
+   Liste videonun üstüne açılan çekmece olur, dokununca gelir; sadece izlenen grubun kanalları görünür */
+.tab-content:fullscreen, .tab-content:-webkit-full-screen { background: #000; width: 100%; height: 100%; }
+body.fs-on { padding-top: 0; padding-bottom: 0; background: #000; }
+body.fs-on .tab-bar { display: none; }
+body.fs-on .side-panel, body.fs-on .mp-browser {
+  position: absolute !important; top: 0; left: 0; bottom: 0;
+  width: 82% !important; max-width: 400px;
+  padding: 16px !important; padding-left: calc(16px + env(safe-area-inset-left, 0px)) !important;
+  overflow-y: auto !important; border-right: none;
+  z-index: 15;
+  transform: translateX(-100%); transition: transform 0.25s ease;
+  box-shadow: 4px 0 12px rgba(0,0,0,0.5);
+}
+body.fs-on .side-panel.open, body.fs-on .mp-browser.open { transform: translateX(0); }
+body.fs-on .player-panel, body.fs-on .mp-player { width: 100%; }
+body.fs-on .drawer-toggle { display: none !important; }
+/* Sadece liste: mod/bölüm düğmeleri, başlık satırı ve M3U giriş alanları gizli */
+body.fs-on #iptv-side-panel .mode-switch,
+body.fs-on #iptv-side-panel .xtream-section-switch,
+body.fs-on #iptv-side-panel #xt-breadcrumb,
+body.fs-on #m3u-mode > :not(#m3u-channel-list) { display: none !important; }
