@@ -465,7 +465,8 @@ function playXtreamLive(item) {
   // iPhone/iPad/Safari'de. Güncel Chrome (Android tablet dahil) de HLS'i kendisi oynatıyor ama
   // HEVC kanalda hata vermeden donuk kalıyordu; hls.js ise HEVC'yi açıkça bildiriyor.
   const url = item.url;
-  if (url.includes('.m3u8') && supportsNativeHls() && isAppleNative()) {
+  // Safari'nin kendi HLS'i kanal başına 2-5 sn bekletiyordu; hls.js varsa (güncel Mac/iPhone) onu kullan
+  if (url.includes('.m3u8') && supportsNativeHls() && isAppleNative() && !Hls.isSupported()) {
     dbg('oynatıcı: tarayıcının kendi HLS (doğrudan kanal)');
     // Safari HEVC'li veya uyumsuz sesli (AC3/MP2) .ts parçalarını çözemiyor ve hls.js gibi
     // nedenini söylemiyor: "Media failed to decode" verip duruyor. O zaman sunucuya geç.
@@ -502,6 +503,8 @@ function playXtreamLive(item) {
     // Cihaz bu kanalın görüntüsünü çözemiyor (ör. tablette 1080p) -> sunucuda 720p'ye çevir
     onDecodeError = () => {
       if (token !== playToken || sentToServer) return;
+      // Mac/iPhone 1080p'yi çözebiliyor: hata yayının kendisinde (ör. bozuk H.264) -> sadece bu kanal sunucuda
+      if (isAppleNative()) { dbg('çözme hatası (Safari) -> sunucu dönüştürmesi'); return toServer(); }
       dbg('çözme hatası -> sunucuda 720p');
       markLowRes(key);
       sentToServer = true;
