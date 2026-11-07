@@ -299,3 +299,6 @@ body.fs-on #iptv-side-panel .mode-switch,
 body.fs-on #iptv-side-panel .xtream-section-switch,
 body.fs-on #iptv-side-panel #xt-breadcrumb,
 body.fs-on #m3u-mode > :not(#m3u-channel-list) { display: none !important; }
+
+/* Mac/PC: videonun kendi tam ekran düğmesini gizle (liste gelmiyordu); üstteki ⛶ düğmesi kullanılır */
+body:not(.platform-mobile) video::-webkit-media-controls-fullscreen-button { display: none !important; }

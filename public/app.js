@@ -82,7 +82,21 @@ function syncFs() {
   // Tam ekrana girince/çıkınca liste kapalı başlasın (dokununca açılır)
   document.querySelectorAll('.side-panel, .mp-browser').forEach(p => p.classList.remove('open'));
 }
-['fullscreenchange', 'webkitfullscreenchange'].forEach(ev => document.addEventListener(ev, syncFs));
+['fullscreenchange', 'webkitfullscreenchange'].forEach(ev => document.addEventListener(ev, () => {
+  const el = fsElement();
+  dbg(`tam ekran: ${el ? (el.id || el.tagName) : 'kapalı'}`);
+  // Videonun kendi tam ekran düğmesi (ya da çift tık) sadece videoyu büyütür, liste gelemez:
+  // çık ve bütün sekmeyi tam ekrana al
+  if (el && el.tagName === 'VIDEO') {
+    const tab = el.closest('.tab-content');
+    const exit = document.exitFullscreen || document.webkitExitFullscreen;
+    const req = tab && (tab.requestFullscreen || tab.webkitRequestFullscreen);
+    if (tab && exit && req) {
+      Promise.resolve(exit.call(document)).then(() => req.call(tab)).then(() => {}, e => dbg('sekme tam ekranı reddedildi: ' + (e && e.message)));
+    }
+  }
+  syncFs();
+}));
 if (landscapeMq.addEventListener) landscapeMq.addEventListener('change', syncFs); else landscapeMq.addListener(syncFs);
 new MutationObserver(syncFs).observe(document.body, { attributes: true, attributeFilter: ['class'] });
 syncFs();
@@ -1237,6 +1251,7 @@ const listCtl = {
   iptv: setupAutoHideList('iptv-side-panel', 'iptv-player-panel', 'iptv-video', 'iptv', () => {
     // Tam ekranda: izlenen kanalın grubunun listesi, izlenen kanal ortada
     if (!document.body.classList.contains('fs-on')) return;
+    dbg('tam ekranda liste açıldı');
     if (!restorePlayingList()) scrollToPlaying();
   }),
   mediaplayer: setupAutoHideList('mp-side-panel', 'mp-player-panel', 'mp-video', 'mediaplayer')
