@@ -201,7 +201,7 @@ app.post('/api/state/m3u-mode', (req, res) => {
   res.json({ ok: true });
 });
 
-function m3uLists() { return state.m3uLists.map(l => ({ id: l.id, name: l.name, type: l.type })); }
+function m3uLists() { return state.m3uLists.map(l => ({ id: l.id, name: l.name, type: l.type, value: l.type === 'url' ? l.value : '' })); }
 function m3uReply(res, extra) {
   syncM3uSource();
   saveState(state);
