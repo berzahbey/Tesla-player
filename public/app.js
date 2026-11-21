@@ -785,12 +785,49 @@ function m3uItem(text, onClick) {
   return el;
 }
 
+function m3uFavItemData(ch) {
+  return { kind: 'm3u', id: ch.url, name: ch.name, url: ch.url, icon: ch.logo || '' };
+}
+function m3uMarkPlaying(el) {
+  document.querySelectorAll('.channel-item').forEach(x => x.classList.remove('playing'));
+  el.classList.add('playing');
+}
+
 function showM3uGroups() {
   const list = document.getElementById('m3u-channel-list');
   list.innerHTML = '';
+  list.appendChild(m3uItem('★ Favoriler (' + favList('m3u').length + ')', showM3uFavorites));
   list.appendChild(m3uItem('📺 Tüm Kanallar (' + m3uAllChannels.length + ')', () => showM3uChannels(m3uAllChannels, true)));
   Object.keys(m3uGroups).forEach(g => {
     list.appendChild(m3uItem('📁 ' + g + ' (' + m3uGroups[g].length + ')', () => showM3uChannels(m3uGroups[g], true)));
+  });
+}
+
+// Favoriler: dokun = oynat; basılı tut + sürükle = sırala; basılı tutup bırak (Mac'te sağ tık) = favoriden çıkar
+function showM3uFavorites() {
+  const list = document.getElementById('m3u-channel-list');
+  list.innerHTML = '';
+  list.appendChild(m3uItem('⬅ Gruplar', showM3uGroups));
+  const favs = favList('m3u');
+  if (!favs.length) {
+    list.insertAdjacentHTML('beforeend', '<p class="hint">Bu listede henüz favori yok. Bir kanalın üzerine basılı tut (Mac/PC\'de sağ tıkla), favorilere eklensin.</p>');
+    return;
+  }
+  list.insertAdjacentHTML('beforeend', '<p class="hint">Basılı tutup sürükle: sırala · Basılı tutup bırak: çıkar</p>');
+  favs.forEach(f => {
+    const el = document.createElement('div');
+    el.className = 'channel-item';
+    el.innerHTML = itemHtml('', String(f.name).replace(/</g, '&lt;'), false);
+    if (m3uSelectedUrl && f.url === m3uSelectedUrl) el.classList.add('playing');
+    bindFavItem(el, 'm3u', f.id, () => {
+      m3uSelectedUrl = f.url;
+      playChannel(f.name, f.url);
+      m3uMarkPlaying(el);
+    }, async () => {
+      await toggleFav({ kind: 'm3u', id: f.id, name: f.name });
+      showM3uFavorites();
+    }, f.group);
+    list.appendChild(el);
   });
 }
 
@@ -801,13 +838,17 @@ function showM3uChannels(channels, withBack) {
     list.appendChild(m3uItem('⬅ Gruplar', showM3uGroups));
   }
   channels.forEach(ch => {
-    const el = m3uItem(ch.name, () => {
+    const el = document.createElement('div');
+    el.className = 'channel-item';
+    el.innerHTML = itemHtml('', ch.name.replace(/</g, '&lt;'), isFav('m3u', ch.url));
+    if (m3uSelectedUrl && ch.url === m3uSelectedUrl) el.classList.add('playing');
+    bindPress(el, () => {
       m3uSelectedUrl = ch.url;
       playChannel(ch.name, ch.url);
-      document.querySelectorAll('.channel-item').forEach(x => x.classList.remove('playing'));
-      el.classList.add('playing');
+      m3uMarkPlaying(el);
+    }, async () => {
+      if (await addFav(m3uFavItemData(ch))) el.insertAdjacentHTML('beforeend', '<span class="fav-star">★</span>');
     });
-    if (m3uSelectedUrl && ch.url === m3uSelectedUrl) el.classList.add('playing');
     list.appendChild(el);
   });
 }
@@ -820,11 +861,6 @@ function renderChannels(channels, autoSelectUrl) {
     if (!m3uGroups[ch.group]) m3uGroups[ch.group] = [];
     m3uGroups[ch.group].push(ch);
   });
-  const names = Object.keys(m3uGroups);
-  if (names.length <= 1) {
-    showM3uChannels(channels, false);
-    return;
-  }
   const last = autoSelectUrl ? channels.find(c => c.url === autoSelectUrl) : null;
   if (last) {
     showM3uChannels(m3uGroups[last.group], true);
@@ -896,6 +932,8 @@ async function loadActiveM3u(autoSelectUrl) {
 function applyM3uReply(r) {
   appState.m3uLists = r.m3uLists;
   appState.activeM3u = r.activeM3u;
+  if (r.favorites) appState.favorites = r.favorites;
+  if (r.favoritesManualOrder) appState.favoritesManualOrder = r.favoritesManualOrder;
   renderM3uPicker();
 }
 
