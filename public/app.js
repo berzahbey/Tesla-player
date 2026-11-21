@@ -26,6 +26,15 @@ async function fetchState() {
   appState = await r.json();
 }
 
+async function postJson(endpoint, body) {
+  try {
+    const r = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) return { ok: false, error: j.error || ('Hata ' + r.status) };
+    return j;
+  } catch (e) { return { ok: false, error: e.message }; }
+}
+
 function saveStateField(endpoint, body) {
   fetch(endpoint, {
     method: 'POST',
@@ -112,8 +121,10 @@ function setIptvMode(mode) {
   saveStateField('/api/state/m3u-mode', { mode });
 
   if (mode === 'xtream') {
+    renderXtreamAccounts();
     if (!xtreamEnabled) {
-      document.getElementById('xt-list').innerHTML = '<p style="color:#f66">Xtream ayarları tanımlı değil.</p>';
+      document.getElementById('xt-main').style.display = 'none';
+      document.getElementById('xt-acc-form').style.display = 'block';
       return;
     }
     const lastCat = appState.xtreamCategory;
@@ -840,23 +851,188 @@ function loadM3UFromUrl(url, autoSelectUrl) {
     });
 }
 
-document.getElementById('m3u-load-btn').addEventListener('click', () => {
-  const url = document.getElementById('m3u-url').value.trim();
-  if (!url) return;
-  saveStateField('/api/state/m3u-url', { url });
-  loadM3UFromUrl(url);
+// ---- M3U listeleri (sunucuda kayıtlı, birden çok) ----
+function renderM3uPicker() {
+  const sel = document.getElementById('m3u-list-select');
+  const lists = appState.m3uLists || [];
+  sel.innerHTML = '';
+  if (!lists.length) {
+    const o = document.createElement('option');
+    o.textContent = '(liste yok, aşağıdan ekleyin)';
+    sel.appendChild(o);
+    sel.disabled = true;
+  } else {
+    sel.disabled = false;
+    lists.forEach(l => {
+      const o = document.createElement('option');
+      o.value = l.id;
+      o.textContent = (l.type === 'file' ? '📄 ' : '🔗 ') + l.name;
+      if (l.id === appState.activeM3u) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+  document.getElementById('m3u-list-rename').disabled = !lists.length;
+  document.getElementById('m3u-list-delete').disabled = !lists.length;
+}
+
+async function loadActiveM3u(autoSelectUrl) {
+  const l = (appState.m3uLists || []).find(x => x.id === appState.activeM3u);
+  const box = document.getElementById('m3u-channel-list');
+  if (!l) { box.innerHTML = '<p style="color:#999">Henüz liste eklenmedi.</p>'; return; }
+  box.innerHTML = '<p style="color:#999">Yükleniyor...</p>';
+  if (l.type === 'file') {
+    try {
+      const r = await fetch('/api/m3u-file-content?id=' + encodeURIComponent(l.id));
+      if (!r.ok) throw new Error('dosya bulunamadı');
+      const channels = parseM3U(await r.text());
+      if (!channels.length) { box.innerHTML = '<p style="color:#f66">Kanal bulunamadı, M3U formatı hatalı olabilir.</p>'; return; }
+      renderChannels(channels, autoSelectUrl);
+    } catch (e) { box.innerHTML = '<p style="color:#f66">Hata: ' + e.message + '</p>'; }
+  } else {
+    loadM3UFromUrl(l.value, autoSelectUrl);
+  }
+}
+
+function applyM3uReply(r) {
+  appState.m3uLists = r.m3uLists;
+  appState.activeM3u = r.activeM3u;
+  renderM3uPicker();
+}
+
+document.getElementById('m3u-list-select').addEventListener('change', async e => {
+  const r = await postJson('/api/state/m3u-select', { id: e.target.value });
+  if (!r.ok) return showToast(r.error || 'Liste açılamadı');
+  applyM3uReply(r);
+  loadActiveM3u();
 });
 
-document.getElementById('m3u-file-load-btn').addEventListener('click', () => {
+document.getElementById('m3u-list-rename').addEventListener('click', async () => {
+  const l = (appState.m3uLists || []).find(x => x.id === appState.activeM3u);
+  if (!l) return;
+  const name = prompt('Liste adı:', l.name);
+  if (!name || !name.trim()) return;
+  const r = await postJson('/api/state/m3u-rename', { id: l.id, name });
+  if (r.ok) applyM3uReply(r); else showToast(r.error || 'Kaydedilemedi');
+});
+
+document.getElementById('m3u-list-delete').addEventListener('click', async () => {
+  const l = (appState.m3uLists || []).find(x => x.id === appState.activeM3u);
+  if (!l || !confirm('"' + l.name + '" listesi silinsin mi?')) return;
+  const r = await postJson('/api/state/m3u-delete', { id: l.id });
+  if (!r.ok) return showToast(r.error || 'Silinemedi');
+  applyM3uReply(r);
+  showToast('Liste silindi');
+  loadActiveM3u();
+});
+
+document.getElementById('m3u-load-btn').addEventListener('click', async () => {
+  const input = document.getElementById('m3u-url');
+  const url = input.value.trim();
+  if (!url) return;
+  const r = await postJson('/api/state/m3u-url', { url });
+  if (!r.ok) return showToast(r.error || 'Kaydedilemedi');
+  input.value = '';
+  applyM3uReply(r);
+  showToast('Liste kaydedildi');
+  loadActiveM3u();
+});
+
+document.getElementById('m3u-file-load-btn').addEventListener('click', async () => {
   const fileInput = document.getElementById('m3u-file');
   const file = fileInput.files[0];
   if (!file) return;
   const formData = new FormData();
   formData.append('m3ufile', file);
-  fetch('/api/state/m3u-file', { method: 'POST', body: formData })
-    .then(() => fetch('/api/m3u-file-content'))
-    .then(r => r.text())
-    .then(text => renderChannels(parseM3U(text)));
+  let r;
+  try { r = await fetch('/api/state/m3u-file', { method: 'POST', body: formData }).then(x => x.json()); }
+  catch (e) { return showToast('Yüklenemedi'); }
+  if (!r.ok) return showToast(r.error || 'Yüklenemedi');
+  fileInput.value = '';
+  applyM3uReply(r);
+  showToast('Liste kaydedildi');
+  loadActiveM3u();
+});
+
+// ---- Xtream hesapları (sunucuda kayıtlı, birden çok) ----
+function renderXtreamAccounts() {
+  const sel = document.getElementById('xt-account-select');
+  const accs = appState.xtreamAccounts || [];
+  sel.innerHTML = '';
+  if (!accs.length) {
+    const o = document.createElement('option');
+    o.textContent = '(hesap yok, ＋ ile ekleyin)';
+    sel.appendChild(o);
+    sel.disabled = true;
+  } else {
+    sel.disabled = false;
+    accs.forEach(a => {
+      const o = document.createElement('option');
+      o.value = a.id;
+      o.textContent = a.name;
+      if (a.id === appState.activeXtream) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+  document.getElementById('xt-acc-rename').disabled = !accs.length;
+  document.getElementById('xt-acc-delete').disabled = !accs.length;
+}
+
+function applyXtreamReply(r) {
+  appState.xtreamAccounts = r.xtreamAccounts;
+  appState.activeXtream = r.activeXtream;
+  appState.favorites = r.favorites;
+  appState.xtreamCategory = null;
+  xtreamEnabled = r.xtreamEnabled;
+  renderXtreamAccounts();
+  document.getElementById('xt-acc-form').style.display = xtreamEnabled ? 'none' : 'block';
+  document.getElementById('xt-main').style.display = xtreamEnabled ? 'block' : 'none';
+  if (xtreamEnabled) { setIptvMode.opened = true; loadXtreamCategories(currentXtSection === 'fav' ? 'live' : currentXtSection); }
+}
+
+document.getElementById('xt-account-select').addEventListener('change', async e => {
+  const r = await postJson('/api/state/xtream-select', { id: e.target.value });
+  if (!r.ok) return showToast(r.error || 'Hesap açılamadı');
+  applyXtreamReply(r);
+});
+
+document.getElementById('xt-acc-add').addEventListener('click', () => {
+  const f = document.getElementById('xt-acc-form');
+  f.style.display = f.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('xt-acc-save').addEventListener('click', async () => {
+  const btn = document.getElementById('xt-acc-save');
+  const body = {
+    name: document.getElementById('xt-acc-name').value,
+    server: document.getElementById('xt-acc-server').value,
+    username: document.getElementById('xt-acc-user').value,
+    password: document.getElementById('xt-acc-pass').value
+  };
+  btn.disabled = true; btn.textContent = 'Bağlanılıyor...';
+  const r = await postJson('/api/state/xtream-add', body);
+  btn.disabled = false; btn.textContent = 'Kaydet ve Bağlan';
+  if (!r.ok) return showToast(r.error || 'Hesap eklenemedi');
+  ['xt-acc-name', 'xt-acc-server', 'xt-acc-user', 'xt-acc-pass'].forEach(id => { document.getElementById(id).value = ''; });
+  applyXtreamReply(r);
+  showToast('Hesap kaydedildi');
+});
+
+document.getElementById('xt-acc-rename').addEventListener('click', async () => {
+  const a = (appState.xtreamAccounts || []).find(x => x.id === appState.activeXtream);
+  if (!a) return;
+  const name = prompt('Hesap adı:', a.name);
+  if (!name || !name.trim()) return;
+  const r = await postJson('/api/state/xtream-rename', { id: a.id, name });
+  if (r.ok) { appState.xtreamAccounts = r.xtreamAccounts; renderXtreamAccounts(); } else showToast(r.error || 'Kaydedilemedi');
+});
+
+document.getElementById('xt-acc-delete').addEventListener('click', async () => {
+  const a = (appState.xtreamAccounts || []).find(x => x.id === appState.activeXtream);
+  if (!a || !confirm('"' + a.name + '" hesabı ve favorileri silinsin mi?')) return;
+  const r = await postJson('/api/state/xtream-delete', { id: a.id });
+  if (!r.ok) return showToast(r.error || 'Silinemedi');
+  applyXtreamReply(r);
+  showToast('Hesap silindi');
 });
 
 
@@ -1284,6 +1460,8 @@ async function init() {
   const [cfg] = await Promise.all([fetch('/api/config').then(r => r.json()), fetchState()]);
   if (cfg.jellyfinUrl) document.getElementById('jellyfin-frame').src = cfg.jellyfinUrl;
   xtreamEnabled = cfg.xtreamEnabled;
+  renderM3uPicker();
+  renderXtreamAccounts();
 
   // Son kanalı hemen başlat (liste yüklenmesini bekleme)
   const lc = appState.lastChannel;
@@ -1300,16 +1478,7 @@ async function init() {
   if (appState.iptvMode === 'xtream') {
     setIptvMode('xtream');
   } else {
-    document.getElementById('m3u-url').value =
-      appState.m3uSource && appState.m3uSource.type === 'url' ? appState.m3uSource.value : '';
-
-    if (appState.m3uSource && appState.m3uSource.type === 'file') {
-      const r = await fetch('/api/m3u-file-content');
-      const text = await r.text();
-      renderChannels(parseM3U(text), appState.lastChannel ? appState.lastChannel.url : null);
-    } else if (appState.m3uSource && appState.m3uSource.value) {
-      loadM3UFromUrl(appState.m3uSource.value, appState.lastChannel ? appState.lastChannel.url : null);
-    }
+    loadActiveM3u(appState.lastChannel ? appState.lastChannel.url : null);
   }
 
   loadDir(appState.mediaPlayerLastPath || '');

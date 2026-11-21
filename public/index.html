@@ -31,7 +31,13 @@
     </div>
 
     <div id="m3u-mode">
-      <h3>M3U Kaynağı</h3>
+      <h3>Listelerim</h3>
+      <div class="list-picker">
+        <select id="m3u-list-select"></select>
+        <button id="m3u-list-rename" title="Adını değiştir">✎</button>
+        <button id="m3u-list-delete" title="Listeyi sil">🗑</button>
+      </div>
+      <h3>Yeni liste ekle</h3>
       <input id="m3u-url" placeholder="https://.../liste.m3u">
       <button id="m3u-load-btn">Linkten Yükle</button>
       <p class="or-text">veya dosya seçin</p>
@@ -42,6 +48,20 @@
     </div>
 
     <div id="xtream-mode" style="display:none;">
+      <div class="list-picker">
+        <select id="xt-account-select"></select>
+        <button id="xt-acc-add" title="Yeni hesap ekle">＋</button>
+        <button id="xt-acc-rename" title="Adını değiştir">✎</button>
+        <button id="xt-acc-delete" title="Hesabı sil">🗑</button>
+      </div>
+      <div id="xt-acc-form" style="display:none;">
+        <input id="xt-acc-name" placeholder="Hesap adı (boş bırakılabilir)">
+        <input id="xt-acc-server" placeholder="Sunucu: http://adres:port">
+        <input id="xt-acc-user" placeholder="Kullanıcı adı" autocomplete="off">
+        <input id="xt-acc-pass" placeholder="Şifre" type="password" autocomplete="new-password">
+        <button id="xt-acc-save">Kaydet ve Bağlan</button>
+      </div>
+      <div id="xt-main">
       <div class="xtream-section-switch">
         <button class="xt-sec-btn fav-tab" data-sec="fav">★ Favoriler</button>
         <button class="xt-sec-btn active" data-sec="live">Canlı TV</button>
@@ -50,6 +70,7 @@
       </div>
       <div id="xt-breadcrumb"></div>
       <div id="xt-list"></div>
+      </div>
     </div>
   </div>
   <div class="player-panel" id="iptv-player-panel">

@@ -302,3 +302,14 @@ body.fs-on #m3u-mode > :not(#m3u-channel-list) { display: none !important; }
 
 /* Mac/PC: videonun kendi tam ekran düğmesini gizle (liste gelmiyordu); üstteki ⛶ düğmesi kullanılır */
 body:not(.platform-mobile) video::-webkit-media-controls-fullscreen-button { display: none !important; }
+
+/* Çoklu liste / hesap seçici */
+.list-picker { display: flex; gap: 6px; margin-bottom: 14px; align-items: stretch; }
+.side-panel .list-picker select {
+  flex: 1; min-width: 0; padding: 10px; border-radius: 6px; border: 1px solid #444;
+  background: #0d0d0d; color: #eee; font-size: 14px;
+}
+.side-panel .list-picker button { width: auto; margin: 0; padding: 0 12px; background: #1e1e1e; border: 1px solid #333; }
+body.platform-tesla .list-picker select { padding: 14px; font-size: 18px; }
+body.platform-tesla .side-panel .list-picker button { padding: 0 18px; font-size: 18px; }
+body.fs-on #iptv-side-panel .list-picker { display: none; }
