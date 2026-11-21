@@ -102,8 +102,13 @@ function syncM3uSource() {
   const l = state.m3uLists.find(x => x.id === state.activeM3u);
   state.m3uSource = l ? { type: l.type, value: l.value } : null;
 }
-function favAcct(f) { return f.acct || state.legacyXtreamAcct || ''; }
-function favVisible(f) { return f.kind !== 'xtream' || favAcct(f) === state.activeXtream; }
+function favAcct(f) { return f.acct || (f.kind === 'm3u' ? 'm1' : state.legacyXtreamAcct || ''); }
+function favVisible(f) {
+  if (f.kind === 'xtream') return favAcct(f) === state.activeXtream;
+  if (f.kind === 'm3u') return favAcct(f) === state.activeM3u;
+  return true;
+}
+function favScope(kind) { return kind === 'xtream' ? state.activeXtream : kind === 'm3u' ? state.activeM3u : ''; }
 function visibleFavs() { return (state.favorites || []).filter(favVisible); }
 function publicState() {
   return {
@@ -205,7 +210,7 @@ function m3uLists() { return state.m3uLists.map(l => ({ id: l.id, name: l.name, 
 function m3uReply(res, extra) {
   syncM3uSource();
   saveState(state);
-  res.json({ ok: true, m3uLists: m3uLists(), activeM3u: state.activeM3u, ...(extra || {}) });
+  res.json({ ok: true, m3uLists: m3uLists(), activeM3u: state.activeM3u, favorites: visibleFavs(), favoritesManualOrder: state.favoritesManualOrder, ...(extra || {}) });
 }
 
 app.post('/api/state/m3u-url', (req, res) => {
@@ -251,6 +256,7 @@ app.post('/api/state/m3u-delete', (req, res) => {
   if (i < 0) return res.status(404).json({ error: 'Liste yok' });
   const [l] = state.m3uLists.splice(i, 1);
   if (l.type === 'file') { try { fs.unlinkSync(path.join(M3U_DIR, l.value)); } catch {} }
+  state.favorites = (state.favorites || []).filter(f => !(f.kind === 'm3u' && favAcct(f) === l.id));
   if (state.activeM3u === l.id) state.activeM3u = state.m3uLists.length ? state.m3uLists[0].id : '';
   m3uReply(res);
 });
@@ -400,11 +406,11 @@ app.post('/api/state/favorite-toggle', async (req, res) => {
   if (i >= 0) { state.favorites.splice(i, 1); added = false; }
   else {
     const fav = {
-      kind: it.kind, id: String(it.id), acct: it.kind === 'xtream' ? state.activeXtream : '', name: String(it.name || ''), url: String(it.url || ''),
+      kind: it.kind, id: String(it.id), acct: favScope(it.kind), name: String(it.name || ''), url: String(it.url || ''),
       tsUrl: String(it.tsUrl || ''), icon: String(it.icon || ''),
       num: Number.isFinite(Number(it.num)) && it.num !== null && it.num !== '' ? Number(it.num) : null,
       // Grup: Xtream kategorisi ya da M3U group-title; favoriler grup grup ve grubun kendi sırasıyla durur
-      group: it.group != null ? String(it.group) : '', groupName: String(it.groupName || ''),
+      group: it.kind === 'm3u' ? String(state.activeM3u) : (it.group != null ? String(it.group) : ''), groupName: String(it.groupName || ''),
       groupPos: Number.isFinite(Number(it.groupPos)) && it.groupPos !== null && it.groupPos !== '' ? Number(it.groupPos) : null
     };
     if (fav.kind === 'xtream' && fav.group) {
