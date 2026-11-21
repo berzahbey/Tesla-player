@@ -128,21 +128,26 @@ const iptvVideo = document.getElementById('iptv-video');
 let hls = null;
 
 function parseM3U(text) {
-  const lines = text.split('\n');
+  const lines = text.split(/\r?\n/);
   const channels = [];
-  const groupOrder = [];
-  let name = '', group = '';
-  for (const line of lines) {
+  let name = '';
+  let group = '';
+  let logo = '';
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
     if (line.startsWith('#EXTINF')) {
-      const parts = line.split(',');
-      name = parts[parts.length - 1].trim();
-      const g = /group-title="([^"]*)"/i.exec(line);
-      group = g ? g[1].trim() : '';
-    } else if (line.trim() && !line.startsWith('#')) {
-      if (!groupOrder.includes(group)) groupOrder.push(group);
-      // num = listedeki sıra, groupPos = grubun listedeki sırası (favorileri gruplamak için)
-      channels.push({ name: name || line.trim(), url: line.trim(), group, groupPos: groupOrder.indexOf(group), num: channels.length });
-      name = ''; group = '';
+      const gm = line.match(/group-title="([^"]*)"/i);
+      const lm = line.match(/tvg-logo="([^"]*)"/i);
+      group = gm ? gm[1].trim() : '';
+      logo = lm ? lm[1].trim() : '';
+      const idx = line.lastIndexOf(',');
+      name = idx >= 0 ? line.slice(idx + 1).trim() : '';
+    } else if (line.startsWith('#EXTGRP:')) {
+      if (!group) group = line.slice(8).trim();
+    } else if (!line.startsWith('#')) {
+      channels.push({ name: name || line, url: line, group: group || 'Diğer', logo: logo });
+      name = ''; group = ''; logo = '';
     }
   }
   return channels;
@@ -757,52 +762,64 @@ function itemHtml(icon, name, fav) {
 }
 
 let lastM3UChannels = [];
-function renderChannels(channels, autoSelectUrl) {
-  lastM3UChannels = channels;
+let m3uAllChannels = [];
+let m3uGroups = {};
+let m3uSelectedUrl = null;
+
+function m3uItem(text, onClick) {
+  const el = document.createElement('div');
+  el.className = 'channel-item';
+  el.textContent = text;
+  el.onclick = onClick;
+  return el;
+}
+
+function showM3uGroups() {
   const list = document.getElementById('m3u-channel-list');
   list.innerHTML = '';
-  const playingUrl = autoSelectUrl || (appState.lastChannel && appState.lastChannel.url);
+  list.appendChild(m3uItem('📺 Tüm Kanallar (' + m3uAllChannels.length + ')', () => showM3uChannels(m3uAllChannels, true)));
+  Object.keys(m3uGroups).forEach(g => {
+    list.appendChild(m3uItem('📁 ' + g + ' (' + m3uGroups[g].length + ')', () => showM3uChannels(m3uGroups[g], true)));
+  });
+}
 
-  const addItem = (ch, container, inFavBlock) => {
-    const el = document.createElement('div');
-    el.className = 'channel-item';
-    el.innerHTML = itemHtml('', ch.name, isFav('m3u', ch.url));
-    if (playingUrl && ch.url === playingUrl) el.classList.add('playing');
-    const open = () => {
+function showM3uChannels(channels, withBack) {
+  const list = document.getElementById('m3u-channel-list');
+  list.innerHTML = '';
+  if (withBack) {
+    list.appendChild(m3uItem('⬅ Gruplar', showM3uGroups));
+  }
+  channels.forEach(ch => {
+    const el = m3uItem(ch.name, () => {
+      m3uSelectedUrl = ch.url;
       playChannel(ch.name, ch.url);
       document.querySelectorAll('.channel-item').forEach(x => x.classList.remove('playing'));
       el.classList.add('playing');
-    };
-    if (inFavBlock) {
-      bindFavItem(el, 'm3u', ch.url, open, async () => {
-        await toggleFav({ kind: 'm3u', id: ch.url, name: ch.name });
-        renderChannels(lastM3UChannels);
-      }, ch.group);
-      container.appendChild(el);
-      return;
-    }
-    bindPress(el, open, async () => {
-      // M3U grubu boşsa da '' yerine '(grupsuz)' gibi sabit bir değer: listedeki sırası korunsun
-      const fav = { kind: 'm3u', id: ch.url, name: ch.name, url: ch.url, num: ch.num, group: ch.group || '_', groupName: ch.group || '', groupPos: ch.groupPos };
-      if (inFavBlock) await toggleFav(fav); else await addFav(fav);
-      renderChannels(lastM3UChannels);
     });
-    container.appendChild(el);
-  };
+    if (m3uSelectedUrl && ch.url === m3uSelectedUrl) el.classList.add('playing');
+    list.appendChild(el);
+  });
+}
 
-  const favs = favList('m3u');
-  if (favs.length) {
-    const h = document.createElement('div');
-    h.className = 'list-heading';
-    h.textContent = '★ Favoriler';
-    list.appendChild(h);
-    favs.forEach(f => addItem({ name: f.name, url: f.url, group: f.group || '' }, list, true));
-    const h2 = document.createElement('div');
-    h2.className = 'list-heading';
-    h2.textContent = 'Tüm kanallar';
-    list.appendChild(h2);
+function renderChannels(channels, autoSelectUrl) {
+  m3uAllChannels = channels;
+  m3uSelectedUrl = autoSelectUrl || null;
+  m3uGroups = {};
+  channels.forEach(ch => {
+    if (!m3uGroups[ch.group]) m3uGroups[ch.group] = [];
+    m3uGroups[ch.group].push(ch);
+  });
+  const names = Object.keys(m3uGroups);
+  if (names.length <= 1) {
+    showM3uChannels(channels, false);
+    return;
   }
-  channels.forEach(ch => addItem(ch, list));
+  const last = autoSelectUrl ? channels.find(c => c.url === autoSelectUrl) : null;
+  if (last) {
+    showM3uChannels(m3uGroups[last.group], true);
+  } else {
+    showM3uGroups();
+  }
 }
 
 function loadM3UFromUrl(url, autoSelectUrl) {
