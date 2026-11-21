@@ -9,9 +9,14 @@ const { Readable } = require('stream');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const MEDIA_ROOT = process.env.MEDIA_ROOT || '/media';
-const XTREAM_SERVER = (process.env.XTREAM_SERVER || '').replace(/\/$/, '');
-const XTREAM_USERNAME = process.env.XTREAM_USERNAME || '';
-const XTREAM_PASSWORD = process.env.XTREAM_PASSWORD || '';
+let XTREAM_SERVER = '';
+let XTREAM_USERNAME = '';
+let XTREAM_PASSWORD = '';
+const ENV_XTREAM = {
+  server: (process.env.XTREAM_SERVER || '').replace(/\/$/, ''),
+  username: process.env.XTREAM_USERNAME || '',
+  password: process.env.XTREAM_PASSWORD || ''
+};
 
 const NEEDS_REMUX = new Set(['mkv', 'avi', 'flv', 'wmv', 'ts', 'mpg', 'mpeg', 'm2ts', 'vob']);
 
@@ -51,6 +56,62 @@ function saveState(state) {
 }
 
 let state = loadState();
+
+// ---- Çoklu M3U listesi ve çoklu Xtream hesabı (eski tek kayıttan otomatik aktarım) ----
+function newId(prefix) { return prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
+if (!Array.isArray(state.m3uLists)) {
+  state.m3uLists = [];
+  const src = state.m3uSource;
+  if (src && src.type === 'file' && fs.existsSync(path.join(M3U_DIR, src.value))) {
+    state.m3uLists.push({ id: 'm1', name: 'M3U listesi', type: 'file', value: src.value });
+  } else if (src && src.type === 'url' && src.value) {
+    state.m3uLists.push({ id: 'm1', name: autoName(src.value), type: 'url', value: src.value });
+  }
+  state.activeM3u = state.m3uLists.length ? 'm1' : '';
+}
+if (!Array.isArray(state.xtreamAccounts)) {
+  state.xtreamAccounts = [];
+  state.activeXtream = '';
+}
+if (ENV_XTREAM.server && ENV_XTREAM.username && ENV_XTREAM.password &&
+    !state.xtreamAccounts.some(a => a.server === ENV_XTREAM.server && a.username === ENV_XTREAM.username)) {
+  const first = !state.xtreamAccounts.length;
+  state.xtreamAccounts.push({ id: 'x1', name: autoName(ENV_XTREAM.server), ...ENV_XTREAM });
+  if (first) { state.activeXtream = 'x1'; state.legacyXtreamAcct = 'x1'; }
+}
+if (!state.xtreamAccounts.some(a => a.id === state.activeXtream)) {
+  state.activeXtream = state.xtreamAccounts.length ? state.xtreamAccounts[0].id : '';
+}
+saveState(state);
+
+function autoName(v) {
+  try {
+    const u = new URL(/^https?:\/\//i.test(v) ? v : 'http://' + v);
+    const last = decodeURIComponent(u.pathname.split('/').filter(Boolean).pop() || '').replace(/\.(m3u8?|php)$/i, '');
+    return last && last !== 'get' ? u.hostname + ' / ' + last : u.hostname;
+  } catch { return String(v).slice(0, 40); }
+}
+function applyActiveXtream() {
+  const a = state.xtreamAccounts.find(x => x.id === state.activeXtream);
+  XTREAM_SERVER = a ? a.server : '';
+  XTREAM_USERNAME = a ? a.username : '';
+  XTREAM_PASSWORD = a ? a.password : '';
+}
+applyActiveXtream();
+function syncM3uSource() {
+  const l = state.m3uLists.find(x => x.id === state.activeM3u);
+  state.m3uSource = l ? { type: l.type, value: l.value } : null;
+}
+function favAcct(f) { return f.acct || state.legacyXtreamAcct || ''; }
+function favVisible(f) { return f.kind !== 'xtream' || favAcct(f) === state.activeXtream; }
+function visibleFavs() { return (state.favorites || []).filter(favVisible); }
+function publicState() {
+  return {
+    ...state,
+    favorites: visibleFavs(),
+    xtreamAccounts: state.xtreamAccounts.map(a => ({ id: a.id, name: a.name, server: a.server, username: a.username }))
+  };
+}
 // Eski sürümlerin yanlışlıkla işaretlediği kanalları bir kere temizle
 if (state.transcodeKeysVersion !== 2) {
   state.transcodeKeys = [];
@@ -131,7 +192,7 @@ app.get('/api/state', async (req, res) => {
   // Grup bilgisi eksik favoriler varsa tamamlanmasını kısa süre bekle
   const pending = backfillFavoriteGroups();
   if (pending) await Promise.race([pending, new Promise(r => setTimeout(r, 15000))]);
-  res.json(state);
+  res.json(publicState());
 });
 
 app.post('/api/state/m3u-mode', (req, res) => {
@@ -140,27 +201,128 @@ app.post('/api/state/m3u-mode', (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/state/m3u-url', (req, res) => {
-  const url = req.body.url || '';
-  state.m3uSource = { type: 'url', value: url };
+function m3uLists() { return state.m3uLists.map(l => ({ id: l.id, name: l.name, type: l.type })); }
+function m3uReply(res, extra) {
+  syncM3uSource();
   saveState(state);
-  res.json({ ok: true });
+  res.json({ ok: true, m3uLists: m3uLists(), activeM3u: state.activeM3u, ...(extra || {}) });
+}
+
+app.post('/api/state/m3u-url', (req, res) => {
+  const url = String(req.body.url || '').trim();
+  if (!url) return res.status(400).json({ error: 'Adres boş' });
+  let l = state.m3uLists.find(x => x.type === 'url' && x.value === url);
+  if (!l) {
+    l = { id: newId('m'), name: String(req.body.name || '').trim() || autoName(url), type: 'url', value: url };
+    state.m3uLists.push(l);
+  }
+  state.activeM3u = l.id;
+  m3uReply(res);
 });
 
 const upload = multer({ dest: M3U_DIR });
 app.post('/api/state/m3u-file', upload.single('m3ufile'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Dosya yok' });
-  const finalPath = path.join(M3U_DIR, 'current.m3u');
-  fs.renameSync(req.file.path, finalPath);
-  state.m3uSource = { type: 'file', value: 'current.m3u' };
-  saveState(state);
-  res.json({ ok: true });
+  const id = newId('m');
+  const fileName = id + '.m3u';
+  fs.renameSync(req.file.path, path.join(M3U_DIR, fileName));
+  const orig = Buffer.from(req.file.originalname || '', 'latin1').toString('utf8').replace(/\.(m3u8?)$/i, '').trim();
+  state.m3uLists.push({ id, name: String(req.body.name || '').trim() || orig || 'M3U dosyası', type: 'file', value: fileName });
+  state.activeM3u = id;
+  m3uReply(res);
+});
+
+app.post('/api/state/m3u-select', (req, res) => {
+  if (!state.m3uLists.some(x => x.id === req.body.id)) return res.status(404).json({ error: 'Liste yok' });
+  state.activeM3u = req.body.id;
+  m3uReply(res);
+});
+
+app.post('/api/state/m3u-rename', (req, res) => {
+  const l = state.m3uLists.find(x => x.id === req.body.id);
+  const name = String(req.body.name || '').trim();
+  if (!l || !name) return res.status(400).json({ error: 'Geçersiz' });
+  l.name = name;
+  m3uReply(res);
+});
+
+app.post('/api/state/m3u-delete', (req, res) => {
+  const i = state.m3uLists.findIndex(x => x.id === req.body.id);
+  if (i < 0) return res.status(404).json({ error: 'Liste yok' });
+  const [l] = state.m3uLists.splice(i, 1);
+  if (l.type === 'file') { try { fs.unlinkSync(path.join(M3U_DIR, l.value)); } catch {} }
+  if (state.activeM3u === l.id) state.activeM3u = state.m3uLists.length ? state.m3uLists[0].id : '';
+  m3uReply(res);
 });
 
 app.get('/api/m3u-file-content', (req, res) => {
-  const filePath = path.join(M3U_DIR, 'current.m3u');
-  if (!fs.existsSync(filePath)) return res.status(404).send('');
+  const l = state.m3uLists.find(x => x.id === (req.query.id || state.activeM3u) && x.type === 'file');
+  const filePath = l ? path.join(M3U_DIR, l.value) : '';
+  if (!l || !fs.existsSync(filePath)) return res.status(404).send('');
   res.sendFile(filePath);
+});
+
+// ---- Çoklu Xtream hesapları ----
+function xtreamAccountsReply(res) {
+  applyActiveXtream();
+  xtreamCache.clear();
+  state.xtreamCategory = null;
+  saveState(state);
+  res.json({
+    ok: true,
+    activeXtream: state.activeXtream,
+    xtreamEnabled: !!XTREAM_SERVER,
+    xtreamAccounts: publicState().xtreamAccounts,
+    favorites: visibleFavs()
+  });
+}
+
+app.post('/api/state/xtream-add', async (req, res) => {
+  const b = req.body || {};
+  let server = String(b.server || '').trim().replace(/\/+$/, '');
+  const username = String(b.username || '').trim();
+  const password = String(b.password || '').trim();
+  if (!server || !username || !password) return res.status(400).json({ error: 'Sunucu, kullanıcı adı ve şifre gerekli' });
+  if (!/^https?:\/\//i.test(server)) server = 'http://' + server;
+  try {
+    const r = await fetch(`${server}/player_api.php?username=${encodeURIComponent(username)}&password=${encodeURIComponent(password)}`, { signal: AbortSignal.timeout(12000) });
+    const j = await r.json();
+    if (!j || !j.user_info || Number(j.user_info.auth) === 0) return res.status(400).json({ error: 'Giriş başarısız: kullanıcı adı veya şifre yanlış' });
+  } catch (e) {
+    return res.status(400).json({ error: 'Sunucuya ulaşılamadı: ' + e.message });
+  }
+  let a = state.xtreamAccounts.find(x => x.server === server && x.username === username);
+  if (a) { a.password = password; if (String(b.name || '').trim()) a.name = String(b.name).trim(); }
+  else {
+    a = { id: newId('x'), name: String(b.name || '').trim() || autoName(server), server, username, password };
+    state.xtreamAccounts.push(a);
+  }
+  state.activeXtream = a.id;
+  xtreamAccountsReply(res);
+});
+
+app.post('/api/state/xtream-select', (req, res) => {
+  if (!state.xtreamAccounts.some(x => x.id === req.body.id)) return res.status(404).json({ error: 'Hesap yok' });
+  state.activeXtream = req.body.id;
+  xtreamAccountsReply(res);
+});
+
+app.post('/api/state/xtream-rename', (req, res) => {
+  const a = state.xtreamAccounts.find(x => x.id === req.body.id);
+  const name = String(req.body.name || '').trim();
+  if (!a || !name) return res.status(400).json({ error: 'Geçersiz' });
+  a.name = name;
+  saveState(state);
+  res.json({ ok: true, xtreamAccounts: publicState().xtreamAccounts });
+});
+
+app.post('/api/state/xtream-delete', (req, res) => {
+  const i = state.xtreamAccounts.findIndex(x => x.id === req.body.id);
+  if (i < 0) return res.status(404).json({ error: 'Hesap yok' });
+  const [a] = state.xtreamAccounts.splice(i, 1);
+  state.favorites = (state.favorites || []).filter(f => !(f.kind === 'xtream' && favAcct(f) === a.id));
+  if (state.activeXtream === a.id) state.activeXtream = state.xtreamAccounts.length ? state.xtreamAccounts[0].id : '';
+  xtreamAccountsReply(res);
 });
 
 app.post('/api/state/last-channel', (req, res) => {
@@ -186,7 +348,7 @@ app.post('/api/client-log', (req, res) => {
 let favBackfillPromise = null;
 function backfillFavoriteGroups() {
   if (favBackfillPromise) return favBackfillPromise;
-  const missing = () => (state.favorites || []).filter(f => f.kind === 'xtream' && !f.group);
+  const missing = () => (state.favorites || []).filter(f => f.kind === 'xtream' && favVisible(f) && !f.group);
   if (!missing().length || !XTREAM_SERVER || !XTREAM_USERNAME || !XTREAM_PASSWORD) return null;
   favBackfillPromise = (async () => {
     try {
@@ -233,12 +395,12 @@ app.post('/api/state/favorite-toggle', async (req, res) => {
   const it = (req.body && req.body.item) || {};
   if (!it.kind || !it.id) return res.status(400).json({ error: 'kind ve id gerekli' });
   state.favorites = Array.isArray(state.favorites) ? state.favorites : [];
-  const i = state.favorites.findIndex(f => f.kind === it.kind && f.id === it.id);
+  const i = state.favorites.findIndex(f => f.kind === it.kind && f.id === it.id && favVisible(f));
   let added;
   if (i >= 0) { state.favorites.splice(i, 1); added = false; }
   else {
     const fav = {
-      kind: it.kind, id: String(it.id), name: String(it.name || ''), url: String(it.url || ''),
+      kind: it.kind, id: String(it.id), acct: it.kind === 'xtream' ? state.activeXtream : '', name: String(it.name || ''), url: String(it.url || ''),
       tsUrl: String(it.tsUrl || ''), icon: String(it.icon || ''),
       num: Number.isFinite(Number(it.num)) && it.num !== null && it.num !== '' ? Number(it.num) : null,
       // Grup: Xtream kategorisi ya da M3U group-title; favoriler grup grup ve grubun kendi sırasıyla durur
@@ -254,7 +416,7 @@ app.post('/api/state/favorite-toggle', async (req, res) => {
     added = true;
   }
   saveState(state);
-  res.json({ ok: true, added, favorites: state.favorites });
+  res.json({ ok: true, added, favorites: visibleFavs() });
 });
 
 // Favorilerin elle sıralanması (basılı tut + sürükle) — bir grubun içinde
@@ -264,7 +426,7 @@ app.post('/api/state/favorites-order', (req, res) => {
   const group = String(b.group || '');
   const ids = Array.isArray(b.ids) ? b.ids.map(String) : [];
   if (!kind || !ids.length) return res.status(400).json({ error: 'kind ve ids gerekli' });
-  const match = f => f.kind === kind && (f.group || '') === group;
+  const match = f => f.kind === kind && favVisible(f) && (f.group || '') === group;
   const positions = [];
   state.favorites.forEach((f, i) => { if (match(f)) positions.push(i); });
   const byId = new Map(positions.map(i => [state.favorites[i].id, state.favorites[i]]));
@@ -275,7 +437,7 @@ app.post('/api/state/favorites-order', (req, res) => {
   state.favorites = next;
   state.favoritesManualOrder = { ...(state.favoritesManualOrder || {}), [kind + '|' + group]: true };
   saveState(state);
-  res.json({ ok: true, favorites: state.favorites, favoritesManualOrder: state.favoritesManualOrder });
+  res.json({ ok: true, favorites: visibleFavs(), favoritesManualOrder: state.favoritesManualOrder });
 });
 
 app.post('/api/state/xtream-category', (req, res) => {
@@ -497,7 +659,7 @@ app.get('/api/xtream/streams', async (req, res) => {
       let changed = false;
       let info;
       for (const f of state.favorites) {
-        if (f.kind !== 'xtream') continue;
+        if (f.kind !== 'xtream' || !favVisible(f)) continue;
         const m = items.find(i => i.key === f.id);
         if (!m) continue;
         if (!f.num && m.num) { f.num = m.num; changed = true; }
