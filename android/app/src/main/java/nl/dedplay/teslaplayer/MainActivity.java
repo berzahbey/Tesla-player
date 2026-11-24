@@ -2,9 +2,12 @@ package nl.dedplay.teslaplayer;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.graphics.Bitmap;
 import android.graphics.Color;
+import android.speech.RecognizerIntent;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.KeyEvent;
@@ -21,6 +24,10 @@ import android.webkit.WebViewClient;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+
 /**
  * Tesla Player'ı tam ekran açan pencere. Bütün özellikler sunucudaki web uygulamasından gelir;
  * kumanda tuşları web uygulamasına iletilir (TV modu), Geri tuşu önce uygulamanın içinde geri gider.
@@ -34,6 +41,7 @@ public class MainActivity extends Activity {
     private String loadedUrl;
     private boolean errorShown;
     private long lastBack;
+    private static final int REQ_VOICE = 77;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -75,6 +83,14 @@ public class MainActivity extends Activity {
             }
         });
         chrome = new WebChromeClient() {
+            // Android'in boş videoda gösterdiği büyük "oynat" resmi yerine siyah
+            @Override
+            public Bitmap getDefaultVideoPoster() {
+                Bitmap b = Bitmap.createBitmap(1, 1, Bitmap.Config.ARGB_8888);
+                b.eraseColor(Color.BLACK);
+                return b;
+            }
+
             @Override
             public void onShowCustomView(View view, CustomViewCallback callback) {
                 if (customView != null) {
@@ -153,6 +169,11 @@ public class MainActivity extends Activity {
             if (e.getAction() == KeyEvent.ACTION_UP) openSettings();
             return true;
         }
+        // Kumandanın mikrofon / arama tuşu: sesle YouTube araması
+        if (k == KeyEvent.KEYCODE_SEARCH || k == KeyEvent.KEYCODE_VOICE_ASSIST) {
+            if (e.getAction() == KeyEvent.ACTION_UP) startVoice();
+            return true;
+        }
         return super.dispatchKeyEvent(e);
     }
 
@@ -173,6 +194,33 @@ public class MainActivity extends Activity {
                         Toast.makeText(this, "Çıkmak için Geri'ye tekrar basın", Toast.LENGTH_SHORT).show();
                     }
                 });
+    }
+
+    /** Android'in ses tanıması (Türkçe). Sonuç web uygulamasına gider: window.tvVoiceResult(metin) */
+    void startVoice() {
+        Intent i = new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM);
+        i.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tr-TR");
+        i.putExtra(RecognizerIntent.EXTRA_PROMPT, "Ne aramak istersin?");
+        try {
+            startActivityForResult(i, REQ_VOICE);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "Bu cihazda sesle arama yok", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    boolean canVoice() {
+        return !getPackageManager().queryIntentActivities(
+                new Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0).isEmpty();
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode != REQ_VOICE || resultCode != RESULT_OK || data == null) return;
+        ArrayList<String> r = data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS);
+        if (r == null || r.isEmpty()) return;
+        web.evaluateJavascript("window.tvVoiceResult && window.tvVoiceResult(" + JSONObject.quote(r.get(0)) + ")", null);
     }
 
     /** Açılışta (en fazla 6 saatte bir) yeni sürüm var mı bak, varsa sor. */
@@ -206,6 +254,16 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void openSettings() {
             runOnUiThread(MainActivity.this::openSettings);
+        }
+
+        @JavascriptInterface
+        public void voiceSearch() {
+            runOnUiThread(MainActivity.this::startVoice);
+        }
+
+        @JavascriptInterface
+        public boolean canVoice() {
+            return MainActivity.this.canVoice();
         }
 
         @JavascriptInterface

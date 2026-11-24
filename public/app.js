@@ -565,7 +565,9 @@ function playXtreamLive(item) {
     iptvVideo.src = url;
   } else if (url.includes('.m3u8') && Hls.isSupported()) {
     dbg('oynatıcı: hls.js (doğrudan kanal)');
-    hls = new Hls();
+    // TV kutuları (Mi Box) zayıf: daha az tampon, yayının birkaç parça gerisinden, ön indirme açık
+    hls = new Hls(currentPlatform === 'tv' ? { startFragPrefetch: true, maxBufferLength: 20, backBufferLength: 10,
+      liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 10, capLevelToPlayerSize: true, enableWorker: true } : {});
     dbgHls(hls, 'kanal');
     // Tek ek kural: görüntü izi hiç çözülemiyorsa (HEVC kanal) sunucuda dönüştür
     let sentToServer = false;
@@ -2397,6 +2399,9 @@ function initYoutube() {
 // Yön tuşları: gezinme · OK: seç · Geri: geri / tam ekrandan çık
 // Film: OK = durdur/oynat, ◀ ▶ = 10 sn geri / 30 sn ileri · Canlı TV (tam ekran): ▲ ▼ = önceki/sonraki kanal, OK/◀ = liste
 const isTV = currentPlatform === 'tv';
+// Android, boş videoda büyük bir "oynat" resmi gösteriyor: siyah kalsın
+const BLANK_POSTER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+['iptv-video', 'mp-video', 'yt-video'].forEach(id => { const v = document.getElementById(id); if (v) v.setAttribute('poster', BLANK_POSTER); });
 const TV_SEL = 'button, input, select, .channel-item, .xt-item, .yt-item, .mp-item, .player-panel, .mp-player';
 let tvWantFs = 0;
 function tvVisible(el) {
@@ -2430,7 +2435,8 @@ function tvRecover() {
 }
 function tvMove(dir) {
   const cur = document.activeElement && document.activeElement !== document.body && document.body.contains(document.activeElement) ? document.activeElement : null;
-  const all = [...document.querySelectorAll(TV_SEL)].filter(el => el !== cur && tvVisible(el));
+  const scope = tvPopup ? tvPopup.box : document;
+  const all = [...scope.querySelectorAll(TV_SEL)].filter(el => el !== cur && tvVisible(el));
   if (!cur || !tvVisible(cur)) { if (!tvRecover()) tvFocus(document.querySelector('.tab-btn.active') || all[0]); return; }
   const a = cur.getBoundingClientRect();
   const acx = a.left + a.width / 2, acy = a.top + a.height / 2;
@@ -2497,8 +2503,38 @@ function tvActivate(el) {
     if (!a || a === document.body || !document.body.contains(a)) tvRecover();
   }, ms));
 }
+// Açılır kutular (M3U listesi, Xtream hesabı) kumandayla açılmıyor: yerine seçim penceresi
+let tvPopup = null;
+function tvSelectPopup(sel) {
+  tvClosePopup();
+  const box = document.createElement('div');
+  box.className = 'tv-popup';
+  const inner = document.createElement('div');
+  inner.className = 'tv-popup-box';
+  box.appendChild(inner);
+  let current = null;
+  [...sel.options].forEach(o => {
+    const b = document.createElement('button');
+    b.className = 'tv-popup-opt' + (o.selected ? ' on' : '');
+    b.textContent = (o.selected ? '✓ ' : '') + o.textContent;
+    b.disabled = o.disabled;
+    b.onclick = () => {
+      tvClosePopup();
+      if (sel.value !== o.value) { sel.value = o.value; sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      tvFocus(sel);
+    };
+    if (o.selected) current = b;
+    inner.appendChild(b);
+  });
+  document.body.appendChild(box);
+  tvPopup = { box, sel };
+  tvFocus(current || inner.querySelector('button'));
+}
+function tvClosePopup() { if (tvPopup) { tvPopup.box.remove(); tvPopup = null; } }
+
 // Geri tuşu. true: uygulama içinde bir şey yapıldı; false: TV uygulaması kapanabilir
 function tvBack() {
+  if (tvPopup) { const s = tvPopup.sel; tvClosePopup(); tvFocus(s); return true; }
   if (mvMenu.classList.contains('open')) { hideMovieMenu(); tvFocus(document.getElementById('mv-sub-btn')); return true; }
   const acc = document.getElementById('yt-account-box');
   if (acc && acc.style.display !== 'none' && tvActiveTab().id === 'youtube') { acc.style.display = 'none'; return true; }
@@ -2523,6 +2559,16 @@ function tvBack() {
   return false;
 }
 window.tvBack = tvBack;
+// TV uygulaması sesli aramanın sonucunu buraya verir: YouTube'da ara
+window.tvVoiceResult = text => {
+  text = String(text || '').trim();
+  if (!text) return;
+  const tabBtn = document.querySelector('.tab-btn[data-tab="youtube"]');
+  if (tabBtn && !tabBtn.classList.contains('active')) tabBtn.click();
+  document.body.classList.remove('pseudo-fs');
+  ytQ.value = text;
+  ytSearch(text).then(() => setTimeout(() => tvFocus(document.querySelector('#yt-list .yt-item')), 100));
+};
 function tvKey(e) {
   const k = e.key;
   const ae = document.activeElement;
@@ -2531,7 +2577,7 @@ function tvKey(e) {
   if (k === 'MediaFastForward' && tvMovieHere()) { e.preventDefault(); movieSeekBy(30); return; }
   if (k === 'MediaRewind' && tvMovieHere()) { e.preventDefault(); movieSeekBy(-10); return; }
   if (k === 'ChannelUp' || k === 'ChannelDown' || k === 'MediaTrackNext' || k === 'MediaTrackPrevious') {
-    e.preventDefault(); tvZap(k === 'ChannelDown' || k === 'MediaTrackNext' ? 1 : -1); return;
+    e.preventDefault(); tvZap(k === 'ChannelUp' || k === 'MediaTrackNext' ? 1 : -1); return;
   }
   if ((k === 'GoBack' || k === 'BrowserBack' || (k === 'Backspace' && !typing)) && !window.TPTV) { if (tvBack()) e.preventDefault(); return; }
   if (typing && (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'Enter')) return;
@@ -2552,8 +2598,9 @@ function tvKey(e) {
       tvFocus(document.getElementById('mv-play'));
       return;
     }
-    if (dir === 'up') return tvZap(-1);
-    if (dir === 'down') return tvZap(1);
+    // ▲ = sonraki kanal (listede aşağı), ▼ = önceki kanal
+    if (dir === 'up') return tvZap(1);
+    if (dir === 'down') return tvZap(-1);
     if (isOk || dir === 'left') return tvOpenList();
     return;
   }
@@ -2564,6 +2611,7 @@ function tvKey(e) {
     tvMove(dir);
     return;
   }
+  if (isOk && ae && ae.tagName === 'SELECT') { e.preventDefault(); tvSelectPopup(ae); return; }
   if (isOk && ae && ae !== document.body && !/^(BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(ae.tagName)) { e.preventDefault(); tvActivate(ae); }
   else if (isOk && ae && ae.tagName === 'BUTTON') { e.preventDefault(); ae.click(); }
 }
@@ -2582,6 +2630,16 @@ if (isTV) {
     b.title = 'TV uygulaması ayarları';
     b.onclick = () => window.TPTV.openSettings();
     document.querySelector('.tab-bar').appendChild(b);
+  }
+  // Sesle arama: kumandanın mikrofonu (TV uygulaması 1.0.2+)
+  if (window.TPTV && window.TPTV.voiceSearch && (!window.TPTV.canVoice || window.TPTV.canVoice())) {
+    const mic = document.createElement('button');
+    mic.type = 'button';
+    mic.className = 'yt-mic';
+    mic.textContent = '🎤';
+    mic.title = 'Sesle ara';
+    mic.onclick = () => window.TPTV.voiceSearch();
+    document.getElementById('yt-search-form').appendChild(mic);
   }
   setTimeout(() => { if (!document.activeElement || document.activeElement === document.body) tvFocus(document.querySelector('.tab-btn.active')); }, 800);
 }
