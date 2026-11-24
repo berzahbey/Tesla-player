@@ -1250,8 +1250,17 @@ const ytCache = new Map();
 async function ytRaw(id) {
   const c = ytCache.get(id);
   if (c && Date.now() - c.t < 3600000) return c.j;
-  const out = await runYtdlp(['-J', `https://www.youtube.com/watch?v=${id}`]);
-  const j = JSON.parse(out);
+  // Videoyu hesapsız al: giriş yapılmış istekte YouTube biçimleri farklı veriyor ve çoğu zaman
+  // oynatılabilir biçim çıkmıyor ("Requested format is not available"). Hesap sadece yedek (yaş sınırı vb.)
+  const url = `https://www.youtube.com/watch?v=${id}`;
+  const args = ['-J', '--ignore-no-formats-error', url];
+  const usable = j => (j.formats || []).some(f => f.url && f.vcodec && f.vcodec !== 'none');
+  let j = null, firstErr = null;
+  try { j = JSON.parse(await runYtdlp(args, 45000, { noCookies: true })); } catch (e) { firstErr = e; }
+  if ((!j || !usable(j)) && ytHasAccount()) {
+    try { const j2 = JSON.parse(await runYtdlp(args)); if (usable(j2) || !j) j = j2; } catch (e) { if (!j) throw firstErr || e; }
+  }
+  if (!j) throw firstErr || new Error('Video bilgisi alınamadı');
   ytCache.set(id, { t: Date.now(), j });
   if (ytCache.size > 100) ytCache.delete(ytCache.keys().next().value);
   return j;
