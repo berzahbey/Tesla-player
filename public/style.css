@@ -365,11 +365,13 @@ body.platform-tesla video::cue { font-size: 1.35em; }
   body.platform-mobile:not(.fs-on) #iptv,
   body.platform-mobile:not(.fs-on) .mp-layout { flex-direction: column; }
   body.platform-mobile:not(.fs-on) #iptv-player-panel,
-  body.platform-mobile:not(.fs-on) #mp-player-panel {
+  body.platform-mobile:not(.fs-on) #mp-player-panel,
+  body.platform-mobile:not(.fs-on) #yt-player-panel {
     order: 1; flex: none; width: 100%; aspect-ratio: 16 / 9; max-height: 45vh;
   }
   body.platform-mobile:not(.fs-on) #iptv-side-panel,
-  body.platform-mobile:not(.fs-on) #mp-side-panel {
+  body.platform-mobile:not(.fs-on) #mp-side-panel,
+  body.platform-mobile:not(.fs-on) #yt-side-panel {
     order: 2; position: static; transform: none; width: 100%; max-width: none; flex: 1; min-height: 0;
     box-shadow: none; border-right: none; border-top: 1px solid #333; padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
   }
@@ -395,4 +397,32 @@ body.platform-tesla video::cue { font-size: 1.35em; }
   body.platform-mobile:not(.fs-on) .mv-row .mv-big { font-size: 17px; min-width: 44px; }
   /* Menü videonun altına (listenin üstüne) açılsın, küçük videoda kesilmesin */
   body.platform-mobile:not(.fs-on) .mv-menu { max-height: 45vh; bottom: auto; top: calc(100% + 4px); }
+}
+
+/* ===== YouTube ===== */
+#youtube .mp-player video { display: block; }
+.yt-search { display: flex; gap: 6px; margin-bottom: 10px; }
+.yt-search input { flex: 1; min-width: 0; padding: 10px; border-radius: 8px; border: 1px solid #444; background: #0d0d0d; color: #eee; font-size: 15px; }
+.yt-search button { padding: 0 14px; border: none; border-radius: 8px; background: #2b7cff; color: #fff; font-weight: 600; font-size: 14px; cursor: pointer; }
+.yt-item { display: flex; gap: 10px; padding: 6px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; }
+.yt-item:hover { background: #2b7cff22; }
+.yt-item.playing { background: #2b7cff55; }
+.yt-thumb { position: relative; width: 128px; flex-shrink: 0; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: #222; }
+.yt-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.yt-badge { position: absolute; right: 4px; bottom: 5px; background: rgba(0,0,0,0.8); color: #fff; font-size: 11px; padding: 1px 4px; border-radius: 3px; }
+.yt-badge.live { background: #e00; }
+.yt-progress { position: absolute; left: 0; bottom: 0; height: 3px; background: #e00; }
+.yt-meta { min-width: 0; }
+.yt-title { font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.yt-ch { color: #999; font-size: 12px; margin-top: 3px; }
+.mp-browser .hint { color: #999; font-size: 13px; line-height: 1.4; }
+.yt-err { color: #f66 !important; }
+body.platform-tesla .yt-search input { padding: 14px; font-size: 18px; }
+body.platform-tesla .yt-search button { padding: 0 20px; font-size: 18px; }
+body.platform-tesla .yt-thumb { width: 168px; }
+body.platform-tesla .yt-title { font-size: 17px; }
+body.platform-tesla .yt-ch { font-size: 14px; }
+@media (orientation: portrait) and (max-width: 600px) {
+  body.platform-mobile:not(.fs-on) .tab-btn { font-size: 13px; padding: 10px 2px; }
+  body.platform-mobile:not(.fs-on) .yt-thumb { width: 112px; }
 }

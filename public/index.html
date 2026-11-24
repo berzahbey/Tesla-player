@@ -18,6 +18,7 @@
 <body>
 <div class="tab-bar">
   <button class="tab-btn active" data-tab="iptv">IPTV / M3U</button>
+  <button class="tab-btn" data-tab="youtube">YouTube</button>
   <button class="tab-btn" data-tab="jellyfin">Jellyfin</button>
   <button class="tab-btn" data-tab="mediaplayer">Media Player</button>
 </div>
@@ -97,6 +98,23 @@
       <div id="mv-menu" class="mv-menu"></div>
     </div>
     <input type="file" id="mv-sub-file" accept=".srt,.vtt,text/vtt,application/x-subrip" style="display:none">
+  </div>
+</div>
+
+<div id="youtube" class="tab-content">
+  <button class="drawer-toggle" data-target="youtube">☰ Liste</button>
+  <div class="mp-layout">
+    <div class="mp-browser" id="yt-side-panel">
+      <form id="yt-search-form" class="yt-search">
+        <input id="yt-q" type="search" placeholder="YouTube'da ara ya da link yapıştır" enterkeyhint="search" autocomplete="off">
+        <button type="submit">Ara</button>
+      </form>
+      <div id="yt-list"></div>
+    </div>
+    <div class="mp-player" id="yt-player-panel">
+      <button class="fullscreen-btn" data-target="yt-player-panel">⛶</button>
+      <video id="yt-video" controls playsinline x-webkit-airplay="allow"></video>
+    </div>
   </div>
 </div>
 

@@ -55,9 +55,7 @@ document.querySelectorAll('.tab-btn').forEach(btn => {
 document.querySelectorAll('.drawer-toggle').forEach(btn => {
   btn.addEventListener('click', () => {
     const target = btn.dataset.target;
-    const panel = target === 'iptv'
-      ? document.getElementById('iptv-side-panel')
-      : document.getElementById('mp-side-panel');
+    const panel = document.getElementById(target === 'iptv' ? 'iptv-side-panel' : target === 'youtube' ? 'yt-side-panel' : 'mp-side-panel');
     panel.classList.toggle('open');
   });
 });
@@ -1484,7 +1482,8 @@ const listCtl = {
     dbg('tam ekranda liste açıldı');
     if (!restorePlayingList()) scrollToPlaying();
   }),
-  mediaplayer: setupAutoHideList('mp-side-panel', 'mp-player-panel', 'mp-video', 'mediaplayer')
+  mediaplayer: setupAutoHideList('mp-side-panel', 'mp-player-panel', 'mp-video', 'mediaplayer'),
+  youtube: setupAutoHideList('yt-side-panel', 'yt-player-panel', 'yt-video', 'youtube')
 };
 
 // Çekmece butonuyla açılan liste de oynatma sırasında kendiliğinden kapansın
@@ -1567,6 +1566,25 @@ const mpCtx = {
     mpVideoEl.play().catch(() => {});
   }
 };
+const ytVideoEl = document.getElementById('yt-video');
+let ytHls = null, ytSessionId = null, ytToken = 0;
+const ytCtx = {
+  name: 'youtube', video: ytVideoEl, panel: document.getElementById('yt-player-panel'),
+  token: () => ytToken,
+  stop() { ytToken++; if (movie.active && movie.ctx === ytCtx) setMovieMode(false); ytCtx.release(); },
+  release() {
+    if (ytHls) { ytHls.destroy(); ytHls = null; }
+    if (ytSessionId) { saveStateField('/api/session/stop', { id: ytSessionId }); ytSessionId = null; }
+    ytVideoEl.removeAttribute('src'); ytVideoEl.load();
+  },
+  setSession(id) { ytSessionId = id; },
+  attach(url) {
+    if (supportsNativeHls() && isAppleNative()) ytVideoEl.src = url;
+    else if (Hls.isSupported()) { ytHls = new Hls(); ytHls.loadSource(url); ytHls.attachMedia(ytVideoEl); }
+    else ytVideoEl.src = url;
+    ytVideoEl.play().catch(() => {});
+  }
+};
 function mvCtx() { return movie.ctx || iptvCtx; }
 function MV() { return mvCtx().video; }
 const mvControls = document.getElementById('mv-controls');
@@ -1640,6 +1658,7 @@ async function playMovie(url, label, opts = {}) {
   if (!opts.adopt) ctx.stop();
   movie.ctx = ctx;
   movie.local = opts.local || null;
+  movie.yt = opts.yt || null;
   setMovieMode(true);
   Object.assign(movie, { url, label, audio: 0, offset: 0, mode: 'direct', pendingAt: null, info: null, infoLoaded: false,
     subAuto: false, sessionSubs: [], lastSave: Date.now() });
@@ -1663,7 +1682,8 @@ async function ensureMovieInfo() {
   if (movie.infoLoaded) return movie.info;
   const url = movie.url;
   const q = movie.local ? 'local=1&src=' + encodeURIComponent(movie.local) : 'src=' + encodeURIComponent(url);
-  try { const r = await fetch('/api/media/info?' + q); if (r.ok && url === movie.url) movie.info = await r.json(); } catch {}
+  const infoUrl = movie.yt ? '/api/yt/info?id=' + encodeURIComponent(movie.yt) : '/api/media/info?' + q;
+  try { const r = await fetch(infoUrl); if (r.ok && url === movie.url) movie.info = await r.json(); } catch {}
   if (url === movie.url) movie.infoLoaded = true;
   return movie.info;
 }
@@ -1692,16 +1712,19 @@ async function movieSession(at, retried) {
   updateMovieUi();
   await ensureMovieInfo();
   if (token !== ctx.token() || my !== movie.token) return;
+  let autoExt = null;
   if (!movie.subAuto) {
     movie.subAuto = true;
-    const trSub = movie.info && !movie.sub && movie.info.subs.find(x => x.text && /^(tur|tr)$/i.test(x.lang));
-    if (trSub) movie.sub = { kind: 'stream', n: trSub.n };
+    const trSub = movie.info && !movie.sub && movie.info.subs.find(x => x.text && /^(tur|tr)$/i.test(x.lang) && !x.auto);
+    if (trSub && trSub.ext) autoExt = trSub;
+    else if (trSub) movie.sub = { kind: 'stream', n: trSub.n };
   }
-  let textSubs = movie.info ? movie.info.subs.filter(x => x.text).map(x => x.n) : [];
+  let textSubs = movie.info ? movie.info.subs.filter(x => x.text && !x.ext).map(x => x.n) : [];
   if (movie.sub && movie.sub.kind === 'stream') textSubs = [movie.sub.n, ...textSubs.filter(n => n !== movie.sub.n)];
   const q = new URLSearchParams({ src: movie.local || movie.url, local: movie.local ? '1' : '0', live: '0', mode: 'auto', start: String(Math.floor(at)),
     audio: String(movie.audio), subs: textSubs.slice(0, 12).join(',') });
   if (lowResDevice) q.set('q', '720');
+  if (movie.yt) { q.delete('src'); q.set('yt', movie.yt); }
   let data = null;
   try { const r = await fetch('/api/session/start?' + q.toString()); data = await r.json(); } catch (e) { data = { error: e.message }; }
   if (token !== ctx.token() || my !== movie.token) { if (data && data.id) saveStateField('/api/session/stop', { id: data.id }); return; }
@@ -1712,6 +1735,7 @@ async function movieSession(at, retried) {
     return;
   }
   ctx.setSession(data.id);
+  if (autoExt) selectSub({ kind: 'ext', n: autoExt.n });
   movie.offset = data.start || 0;
   movie.pendingAt = null;
   movie.sessionSubs = data.subs || [];
@@ -1757,6 +1781,17 @@ function selectSub(sel) {
   stopSubPolling();
   renderCues();
   if (!sel || sel.kind === 'file') return;
+  if (sel.kind === 'ext') {
+    const x = movie.info && movie.info.subs.find(y => y.n === sel.n);
+    if (!x) return;
+    fetch(x.url).then(r => (r.ok ? r.text() : '')).then(t => {
+      if (movie.sub !== sel) return;
+      movie.fileCues = parseSubtitles(t);
+      if (!movie.fileCues.length) showToast('Altyazı alınamadı');
+      renderCues();
+    }).catch(() => showToast('Altyazı alınamadı'));
+    return;
+  }
   // Doğrudan oynayan dosyada altyazı sunucuda çıkarılır: akışa geç
   if (movie.mode === 'direct' || !movie.sessionSubs.some(x => x.n === sel.n)) {
     showToast('Altyazı hazırlanıyor…');
@@ -1813,7 +1848,7 @@ function parseSubtitles(text) {
 function renderCues() {
   const t = movie.track;
   if (t && t.cues) while (t.cues.length) t.removeCue(t.cues[0]);
-  const src = !movie.sub ? [] : movie.sub.kind === 'file' ? (movie.fileCues || []) : movie.streamCues;
+  const src = !movie.sub ? [] : (movie.sub.kind === 'file' || movie.sub.kind === 'ext') ? (movie.fileCues || []) : movie.streamCues;
   if (!src.length) { if (t) t.mode = movie.sub ? 'showing' : 'hidden'; return; }
   if (!movie.track) movie.track = MV().addTextTrack('subtitles', 'Altyazı', 'tr');
   movie.track.mode = 'showing';
@@ -1901,8 +1936,8 @@ async function openMovieMenu(kind, keep) {
   } else {
     add('Kapalı', !movie.sub, () => { hideMovieMenu(); selectSub(null); });
     (info ? info.subs : []).forEach(x => add(subLabel(x) + (x.text ? '' : ' (resim altyazı, desteklenmiyor)'),
-      !!movie.sub && movie.sub.kind === 'stream' && movie.sub.n === x.n,
-      x.text ? () => { hideMovieMenu(); selectSub({ kind: 'stream', n: x.n }); } : null));
+      !!movie.sub && movie.sub.kind === (x.ext ? 'ext' : 'stream') && movie.sub.n === x.n,
+      x.text ? () => { hideMovieMenu(); selectSub({ kind: x.ext ? 'ext' : 'stream', n: x.n }); } : null));
     if (info && !info.subs.length) add('Dosyada altyazı yok', false, null);
     add('📂 Dosyadan yükle (.srt / .vtt)…', !!movie.sub && movie.sub.kind === 'file',
       () => { hideMovieMenu(); document.getElementById('mv-sub-file').click(); });
@@ -1951,7 +1986,7 @@ mvSeek.addEventListener('change', () => {
   movieSeek(mvSeek.value / 1000 * movieDuration());
 });
 mvControls.addEventListener('pointerdown', () => showMovieControls());
-[iptvCtx, mpCtx].forEach(c => {
+[iptvCtx, mpCtx, ytCtx].forEach(c => {
   c.panel.addEventListener('pointerdown', e => {
     if (!movie.active || movie.ctx !== c || e.target.closest('.mv-controls') || e.target.closest('.fullscreen-btn')) return;
     if (mvControls.classList.contains('show') && e.pointerType !== 'mouse') { mvControls.classList.remove('show'); hideMovieMenu(); }
@@ -1976,7 +2011,7 @@ function saveMovieResume(done) {
   saveStateField('/api/state/resume-movie', { url: movie.url, position, duration, label: movie.label, done: !!done });
 }
 let mvUiAt = 0;
-[iptvCtx, mpCtx].forEach(c => {
+[iptvCtx, mpCtx, ytCtx].forEach(c => {
   const v = c.video;
   const mine = () => movie.active && movie.ctx === c;
   v.addEventListener('timeupdate', () => {
@@ -2011,10 +2046,11 @@ const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platfor
 let bg = null;
 let bgPrimed = false;
 const lastPauseAt = new WeakMap();
-function allVideos() { return [iptvVideo, document.getElementById('mp-video')]; }
+function allVideos() { return [iptvVideo, document.getElementById('mp-video'), document.getElementById('yt-video')]; }
 allVideos().forEach(v => v.addEventListener('pause', () => lastPauseAt.set(v, Date.now())));
-function hlsFor(v) { return v === iptvVideo ? hls : (typeof mpHls !== 'undefined' ? mpHls : null); }
+function hlsFor(v) { return v === iptvVideo ? hls : v.id === 'yt-video' ? ytHls : (typeof mpHls !== 'undefined' ? mpHls : null); }
 function activeVideo() {
+  if (document.getElementById('youtube').classList.contains('active')) return document.getElementById('yt-video');
   return document.getElementById('mediaplayer').classList.contains('active') ? document.getElementById('mp-video') : iptvVideo;
 }
 function silentWavUrl() {
@@ -2145,6 +2181,79 @@ if ('mediaSession' in navigator) {
   set('seekto', d => { if (d && d.seekTime != null) seekAnyTo(d.seekTime); });
 }
 
+// ===================== YouTube =====================
+// Arama sunucuda yt-dlp ile yapılır; videolar film oynatıcıda açılır (sarma, altyazı, kilit ekranında ses)
+const ytList = document.getElementById('yt-list');
+const ytQ = document.getElementById('yt-q');
+function ytEsc(t) { return String(t || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function ytItem(v, progress) {
+  const el = document.createElement('div');
+  el.className = 'yt-item';
+  if (movie.active && movie.yt === v.id) el.classList.add('playing');
+  const badge = v.live ? '<span class="yt-badge live">CANLI</span>' : v.duration ? `<span class="yt-badge">${fmtTime(v.duration)}</span>` : '';
+  const bar = progress ? `<span class="yt-progress" style="width:${Math.min(100, Math.round(progress * 100))}%"></span>` : '';
+  el.innerHTML = `<div class="yt-thumb"><img loading="lazy" src="${ytEsc(v.thumb)}" alt="">${badge}${bar}</div>` +
+    `<div class="yt-meta"><div class="yt-title">${ytEsc(v.title)}</div><div class="yt-ch">${ytEsc(v.channel)}</div></div>`;
+  el.onclick = () => {
+    ytPlay(v);
+    document.querySelectorAll('.yt-item').forEach(x => x.classList.remove('playing'));
+    el.classList.add('playing');
+  };
+  return el;
+}
+async function ytPlay(v) {
+  await playMovie('yt:' + v.id, v.link ? 'YouTube' : v.title, { ctx: ytCtx, yt: v.id, server: true });
+  // Bağlantıdan açılan videonun başlığını bilgiden al
+  if (movie.yt === v.id && movie.info && movie.info.title && v.link) {
+    movie.label = movie.info.title;
+    MV().dataset.title = movie.info.title;
+    document.getElementById('mv-title').textContent = movie.info.title;
+  }
+}
+// Ana görünüm: yarım kalan YouTube videoları (sunucuda saklanır, her cihazda aynı)
+function showYtHome() {
+  ytList.innerHTML = '';
+  const rm = appState.resumeMovies || {};
+  const items = Object.keys(rm).filter(k => k.startsWith('yt:') && rm[k].label)
+    .sort((a, b) => (rm[b].t || 0) - (rm[a].t || 0)).slice(0, 30);
+  if (!items.length) {
+    ytList.innerHTML = '<p class="hint">Aramak istediğini yukarıya yaz ya da bir YouTube bağlantısı yapıştır.</p>';
+    return;
+  }
+  ytList.insertAdjacentHTML('beforeend', '<div class="list-heading">Kaldığın yerden</div>');
+  items.forEach(k => {
+    const id = k.slice(3), r = rm[k];
+    ytList.appendChild(ytItem({ id, title: r.label, channel: fmtTime(r.position) + (r.duration ? ' / ' + fmtTime(r.duration) : ''),
+      thumb: `https://i.ytimg.com/vi/${id}/mqdefault.jpg` }, r.duration ? r.position / r.duration : 0));
+  });
+}
+async function ytSearch(q) {
+  ytList.innerHTML = '<p class="hint">Aranıyor…</p>';
+  let r;
+  try { r = await fetch('/api/yt/search?q=' + encodeURIComponent(q)).then(x => x.json()); } catch (e) { r = { error: e.message }; }
+  if (!Array.isArray(r)) { ytList.innerHTML = `<p class="hint yt-err">${ytEsc((r && r.error) || 'Arama yapılamadı')}</p>`; return; }
+  lsSet('tp-yt-q', q);
+  ytList.innerHTML = '';
+  const home = document.createElement('div');
+  home.className = 'channel-item';
+  home.textContent = '⬅ Kaldığın yerden';
+  home.onclick = () => { ytQ.value = ''; lsSet('tp-yt-q', ''); showYtHome(); };
+  ytList.appendChild(home);
+  if (!r.length) { ytList.insertAdjacentHTML('beforeend', '<p class="hint">Sonuç bulunamadı.</p>'); return; }
+  r.forEach(v => ytList.appendChild(ytItem(v)));
+  if (r.length === 1 && r[0].link) ytList.querySelector('.yt-item').click();
+}
+document.getElementById('yt-search-form').addEventListener('submit', e => {
+  e.preventDefault();
+  const q = ytQ.value.trim();
+  ytQ.blur();
+  if (q) ytSearch(q); else showYtHome();
+});
+function initYoutube() {
+  const last = lsGet('tp-yt-q', '');
+  if (last) { ytQ.value = last; ytSearch(last); } else showYtHome();
+}
+
 // ===================== Jellyfin =====================
 // Jellyfin uygulamanın kendi adresinden açılır (/web/...): Jellyfin'in kendi girişi ("Beni Hatırla")
 // böylece tarayıcıda kalıcı olur, her açılışta tekrar sorulmaz.
@@ -2181,6 +2290,7 @@ async function init() {
   }
 
   loadDir(appState.mediaPlayerLastPath || '');
+  initYoutube();
 }
 
 init();

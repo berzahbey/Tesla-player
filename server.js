@@ -970,15 +970,14 @@ function needsTranscode(streams) {
   return (v.height || 0) > TRANSCODE_MAX_HEIGHT;
 }
 
-function buildArgs({ input, isRemote, live, transcode, hw, dir, lowres, start, audio, subs }) {
+function buildArgs({ input, input2, ua, isRemote, live, transcode, hw, dir, lowres, start, audio, subs }) {
   // 720p ve altı: Main profil, seviye 3.1 (en eski cihazların bile çözebildiği biçim)
   const H = lowres ? Math.min(720, TRANSCODE_MAX_HEIGHT) : TRANSCODE_MAX_HEIGHT;
   lowres = H <= 720;
   const args = ['-hide_banner', '-loglevel', 'warning', '-fflags', '+genpts+discardcorrupt'];
-  if (isRemote) {
-    args.push('-user_agent', FF_UA, '-reconnect', '1', '-reconnect_streamed', '1',
-      '-reconnect_on_network_error', '1', '-reconnect_delay_max', '5');
-  }
+  const remoteOpts = isRemote ? ['-user_agent', ua || FF_UA, '-reconnect', '1', '-reconnect_streamed', '1',
+    '-reconnect_on_network_error', '1', '-reconnect_delay_max', '5'] : [];
+  args.push(...remoteOpts);
   if (transcode && hw) {
     args.push('-init_hw_device', `vaapi=va:${VAAPI_DEVICE}`, '-filter_hw_device', 'va',
       '-hwaccel', 'vaapi', '-hwaccel_device', 'va', '-hwaccel_output_format', 'vaapi');
@@ -1006,7 +1005,15 @@ function buildArgs({ input, isRemote, live, transcode, hw, dir, lowres, start, a
   // -copyts: altyazılar filmin gerçek saatiyle yazılır (atlanan kısmın altyazıları yanlış yere düşmesin)
   if (!live && start > 0) args.push('-ss', String(start), '-copyts');
   const aIdx = Number.isInteger(audio) && audio >= 0 ? audio : 0;
-  args.push('-analyzeduration', '2000000', '-i', input, '-map', '0:v:0?', '-map', `0:a:${aIdx}?`);
+  args.push('-analyzeduration', '2000000', '-i', input);
+  if (input2) {
+    // YouTube: görüntü ve ses ayrı dosyalar
+    args.push(...remoteOpts);
+    if (!live && start > 0) args.push('-ss', String(start));
+    args.push('-i', input2, '-map', '0:v:0', '-map', '1:a:0');
+  } else {
+    args.push('-map', '0:v:0?', '-map', `0:a:${aIdx}?`);
+  }
 
   if (!transcode) {
     args.push('-c:v', 'copy');
@@ -1108,6 +1115,161 @@ async function runFfmpeg(session, opts) {
   return false;
 }
 
+// ---- YouTube (yt-dlp ile; YouTube'un gömülü oynatıcısı kullanılmaz) ----
+const YTDLP = process.env.YTDLP_BIN || 'yt-dlp';
+// yt-dlp YouTube için bir JavaScript motoru istiyor: konteynerdeki node kullanılır
+const YTDLP_BASE = ['--no-warnings', '--no-playlist', '--js-runtimes', 'node'];
+function runYtdlp(args, timeoutMs = 45000) {
+  return new Promise((resolve, reject) => {
+    const p = spawn(YTDLP, [...YTDLP_BASE, ...args]);
+    let out = '', err = '';
+    p.stdout.on('data', d => { out += d; });
+    p.stderr.on('data', d => { err += d; if (err.length > 4000) err = err.slice(-4000); });
+    const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, timeoutMs);
+    p.on('error', e => { clearTimeout(timer); reject(new Error(e.code === 'ENOENT' ? 'yt-dlp kurulu değil (image yeniden derlenmeli)' : e.message)); });
+    p.on('exit', code => {
+      clearTimeout(timer);
+      if (code === 0) return resolve(out);
+      const last = err.split('\n').filter(l => /ERROR/.test(l)).pop() || err.trim().split('\n').pop() || ('kod ' + code);
+      console.error('yt-dlp hata:', last);
+      reject(new Error(last.replace(/^ERROR:\s*(\[[^\]]+\]\s*)?(\S+:\s*)?/, '').slice(0, 200)));
+    });
+  });
+}
+// Açılışta yt-dlp'yi arka planda güncelle (YouTube değiştikçe eski sürüm bozulabiliyor)
+if (process.env.YTDLP_AUTO_UPDATE !== '0') {
+  const up = spawn('pip', ['install', '-q', '-U', '--break-system-packages', '--no-cache-dir', 'yt-dlp', 'yt-dlp-ejs']);
+  up.on('exit', code => console.log('yt-dlp güncelleme: ' + (code === 0 ? 'tamam' : 'yapılamadı (kod ' + code + ')')));
+  up.on('error', () => {});
+}
+
+const YT_ID = /^[A-Za-z0-9_-]{11}$/;
+function ytIdFrom(q) {
+  q = String(q || '').trim();
+  if (YT_ID.test(q)) return q;
+  const m = q.match(/(?:youtu\.be\/|[?&]v=|\/shorts\/|\/live\/|\/embed\/)([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
+function ytThumb(id) { return `https://i.ytimg.com/vi/${id}/mqdefault.jpg`; }
+
+app.get('/api/yt/search', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q) return res.json([]);
+  const direct = ytIdFrom(q);
+  if (direct) return res.json([{ id: direct, title: 'YouTube videosu', channel: '', duration: 0, thumb: ytThumb(direct), link: true }]);
+  try {
+    const out = await runYtdlp(['--flat-playlist', '-J', `ytsearch30:${q}`], 30000);
+    const j = JSON.parse(out);
+    res.json((j.entries || []).filter(e => e && YT_ID.test(e.id || '')).map(e => ({
+      id: e.id, title: e.title || '', channel: e.channel || e.uploader || '',
+      duration: e.duration || 0, live: e.live_status === 'is_live', thumb: ytThumb(e.id)
+    })));
+  } catch (e) { res.status(502).json({ error: 'Arama yapılamadı: ' + e.message }); }
+});
+
+// Video bilgisi ve en uygun biçimler (H.264 görüntü + AAC ses). 1 saat saklanır (adresler ~6 saat geçerli)
+const ytCache = new Map();
+async function ytRaw(id) {
+  const c = ytCache.get(id);
+  if (c && Date.now() - c.t < 3600000) return c.j;
+  const out = await runYtdlp(['-J', `https://www.youtube.com/watch?v=${id}`]);
+  const j = JSON.parse(out);
+  ytCache.set(id, { t: Date.now(), j });
+  if (ytCache.size > 100) ytCache.delete(ytCache.keys().next().value);
+  return j;
+}
+async function ytResolve(id, maxH) {
+  if (!YT_ID.test(id)) throw new Error('Geçersiz video');
+  const j = await ytRaw(id);
+  const fm = (j.formats || []).filter(f => f.url);
+  const ua = (j.http_headers && j.http_headers['User-Agent']) || undefined;
+  if (j.is_live) {
+    const hlsF = fm.filter(f => /m3u8/.test(f.protocol || '') && f.vcodec && f.vcodec !== 'none' && (f.height || 0) <= maxH)
+      .sort((a, b) => (b.height || 0) - (a.height || 0) || (b.tbr || 0) - (a.tbr || 0))[0];
+    if (!hlsF) throw new Error('Canlı yayın açılamadı');
+    return { live: true, v: hlsF, a: null, ua, h264: /^avc1/.test(hlsF.vcodec || '') };
+  }
+  const isHttp = f => /^https?$/.test(f.protocol || "https");
+  const vids = fm.filter(f => isHttp(f) && /^avc1/.test(f.vcodec || '') && (!f.acodec || f.acodec === 'none') && (f.height || 0) <= maxH)
+    .sort((a, b) => (b.height || 0) - (a.height || 0) || (b.tbr || 0) - (a.tbr || 0));
+  const auds = fm.filter(f => isHttp(f) && /^mp4a/.test(f.acodec || '') && (!f.vcodec || f.vcodec === 'none'))
+    .sort((a, b) => ((/original|default/i.test(b.format_note || '') ? 1 : 0) - (/original|default/i.test(a.format_note || '') ? 1 : 0)) || (b.abr || 0) - (a.abr || 0));
+  if (vids[0] && auds[0]) return { live: false, v: vids[0], a: auds[0], ua, h264: true };
+  // Yedek: görüntü+ses birlikte olan biçim (genelde 360p)
+  const both = fm.filter(f => isHttp(f) && f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none')
+    .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
+  if (both) return { live: false, v: both, a: null, ua, h264: /^avc1/.test(both.vcodec || '') };
+  throw new Error('Uygun biçim bulunamadı');
+}
+
+app.get('/api/yt/info', async (req, res) => {
+  const id = String(req.query.id || '');
+  try {
+    const j = await ytRaw(id);
+    const r = await ytResolve(id, 1080);
+    const subs = [];
+    const add = (lang, list, auto) => {
+      const v = (list || []).find(x => x.ext === 'vtt');
+      if (!v) return;
+      subs.push({ n: subs.length, lang, title: auto ? 'otomatik' : '', codec: 'webvtt', text: true, ext: true, auto,
+        url: `/api/yt/sub?id=${id}&lang=${encodeURIComponent(lang)}&auto=${auto ? 1 : 0}` });
+    };
+    Object.keys(j.subtitles || {}).filter(l => l !== 'live_chat').forEach(l => add(l, j.subtitles[l], false));
+    // Otomatik altyazılardan: Türkçe, İngilizce ve videonun kendi dili
+    const autoC = j.automatic_captions || {};
+    const orig = Object.keys(autoC).find(l => /-orig$/.test(l));
+    [...new Set(['tr', 'en', orig, j.language].filter(Boolean))].forEach(l => { if (autoC[l] && !(j.subtitles || {})[l]) add(l.replace(/-orig$/, ''), autoC[l], true); });
+    res.json({
+      title: j.title || '', channel: j.channel || j.uploader || '', duration: r.live ? 0 : (j.duration || 0), live: r.live, container: 'youtube',
+      video: { codec: r.h264 ? 'h264' : (r.v.vcodec || ''), height: r.v.height || 0 },
+      audio: [{ n: 0, codec: 'aac', channels: (r.a && r.a.audio_channels) || 2, lang: (r.a && r.a.language) || j.language || '', title: '' }],
+      subs
+    });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Otomatik altyazılar kayan yazı gibi her satırı iki kez veriyor: tekrarları ayıkla
+function cleanYtVtt(text) {
+  const cues = [];
+  const blocks = String(text).replace(/\r/g, '').split(/\n\s*\n/);
+  let prevLast = '';
+  for (const b of blocks) {
+    const lines = b.split('\n');
+    const i = lines.findIndex(l => l.includes('-->'));
+    if (i < 0) continue;
+    const time = lines[i].replace(/\s+(align|position|line|size):\S+/g, '');
+    const txt = lines.slice(i + 1).map(l => l.replace(/<[^>]+>/g, '').trim()).filter(Boolean);
+    const fresh = txt.filter(l => l !== prevLast);
+    if (txt.length) prevLast = txt[txt.length - 1];
+    const [a, z] = time.split('-->').map(x => x.trim());
+    if (!fresh.length || a === z) continue;
+    cues.push(`${a} --> ${z}\n${fresh.join('\n')}`);
+  }
+  return 'WEBVTT\n\n' + cues.join('\n\n') + '\n';
+}
+app.get('/api/yt/sub', async (req, res) => {
+  const id = String(req.query.id || '');
+  const lang = String(req.query.lang || '');
+  const auto = req.query.auto === '1';
+  try {
+    const j = await ytRaw(id);
+    const src = auto ? (j.automatic_captions || {}) : (j.subtitles || {});
+    const list = src[lang] || src[lang + '-orig'] || [];
+    const v = list.find(x => x.ext === 'vtt');
+    if (!v) return res.status(404).send('Altyazı yok');
+    const up = await upstreamGet(v.url, { 'User-Agent': (j.http_headers && j.http_headers['User-Agent']) || FF_UA });
+    let body = '';
+    up.setEncoding('utf8');
+    up.on('data', c => { body += c; });
+    up.on('end', () => {
+      res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(auto ? cleanYtVtt(body) : body);
+    });
+    up.on('error', e => { if (!res.headersSent) res.status(502).send(e.message); });
+  } catch (e) { res.status(502).send(e.message); }
+});
+
 // ---- Film bilgisi: süre, ses dilleri, altyazılar ----
 const TEXT_SUBS = new Set(['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text', 'text']);
 const mediaInfoCache = new Map();
@@ -1154,17 +1316,25 @@ app.get('/api/media/info', async (req, res) => {
 // GET /api/session/start?src=...&local=0|1&live=0|1&mode=auto|transcode|copy
 app.get('/api/session/start', async (req, res) => {
   const isLocal = req.query.local === '1';
-  const live = req.query.live === '1';
   const mode = ['auto', 'transcode', 'copy'].includes(req.query.mode) ? req.query.mode : 'copy';
   const lowres = req.query.q === '720';
   const start = Math.max(0, parseFloat(req.query.start) || 0);
   const audio = req.query.audio != null && req.query.audio !== '' ? parseInt(req.query.audio, 10) : 0;
   const subs = String(req.query.subs || '').split(',').filter(x => /^\d+$/.test(x)).map(Number).slice(0, 12);
-  let input;
-  try {
-    input = isLocal ? safeResolve(req.query.src || '') : resolveRemoteSrc(req.query.src);
-  } catch (e) {
-    return res.status(400).json({ error: e.message });
+  let input, input2 = null, ytUa = null, ytTranscode = null;
+  let live = req.query.live === '1';
+  if (req.query.yt) {
+    // YouTube: adresleri yt-dlp ile çöz
+    const yt = await ytResolve(String(req.query.yt), lowres ? 720 : 1080).catch(e => ({ error: e.message }));
+    if (!yt || yt.error) return res.status(502).json({ error: (yt && yt.error) || 'YouTube videosu açılamadı' });
+    input = yt.v.url; input2 = yt.a ? yt.a.url : null; ytUa = yt.ua; live = !!yt.live;
+    ytTranscode = !yt.h264;
+  } else {
+    try {
+      input = isLocal ? safeResolve(req.query.src || '') : resolveRemoteSrc(req.query.src);
+    } catch (e) {
+      return res.status(400).json({ error: e.message });
+    }
   }
   if (!input) return res.status(400).json({ error: 'src gerekli' });
 
@@ -1173,12 +1343,13 @@ app.get('/api/session/start', async (req, res) => {
 
   // Canlı HLS'yi ffmpeg'e kendi aracı bağlantımız üzerinden ver: sağlayıcı ffmpeg'in doğrudan
   // liste yenilemesini "HTTP 509" ile reddediyor, tarayıcıların kullandığı bu yol ise sorunsuz
-  if (live && !isLocal && /\.m3u8(\?|$)/i.test(input)) {
+  if (live && !isLocal && !req.query.yt && /\.m3u8(\?|$)/i.test(input)) {
     input = `http://127.0.0.1:${PORT}/api/xtream-stream?url=${encodeURIComponent(input)}`;
   }
 
   let transcode = mode === 'transcode';
-  if (mode === 'auto') transcode = needsTranscode(await probe(input, !isLocal));
+  if (ytTranscode !== null) transcode = ytTranscode;
+  else if (mode === 'auto') transcode = needsTranscode(await probe(input, !isLocal));
 
   const id = crypto.randomUUID();
   const dir = path.join(HLS_TMP_ROOT, id);
@@ -1187,8 +1358,8 @@ app.get('/api/session/start', async (req, res) => {
   sessions.set(id, session);
   res.on('close', () => { if (!res.writableEnded) session.cancelled = true; });
 
-  if (lowres) transcode = true;
-  const base = { input, isRemote: !isLocal, live, transcode, dir, lowres, start, audio, subs };
+  if (lowres && !req.query.yt) transcode = true;
+  const base = { input, input2, ua: ytUa, isRemote: !isLocal, live, transcode, dir, lowres, start, audio, subs: req.query.yt ? [] : subs };
   const resetDir = () => {
     try { session.proc.kill('SIGKILL'); } catch {}
     fs.rmSync(dir, { recursive: true, force: true });
