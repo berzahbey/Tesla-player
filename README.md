@@ -37,9 +37,7 @@ docker compose up -d --build
 - mp4/H.264 dosyalar doğrudan oynar; mkv/avi vb. sunucuda ffmpeg ile akışa çevrilir (çoğunlukla kopyalayarak, işlemciyi yormadan).
 - iPhone: ekran kilitlenince / uygulamadan çıkınca ses devam eder (kilit ekranından oynat/durdur ve sarma). Safari'den açıldığında en iyi çalışır; ana ekrana eklenmiş uygulamada iOS arka plan sesini kısıtlayabiliyor.
 
-## Jellyfin: bir kere giriş
+## Jellyfin
 
-- Jellyfin artık uygulamanın kendi adresi üzerinden açılır (`/web/...`), böylece tarayıcı girişi unutmaz.
-- Jellyfin sekmesinde kullanıcı adı/şifre bir kere kaydedilir (sunucuda saklanır, tarayıcıya gönderilmez); Tesla, iPhone ve Mac'te otomatik giriş yapılır. Sol alttaki ⚙ ile değiştirilir/silinir.
-- Not: Uygulama adresine erişen herkes bu Jellyfin hesabıyla girmiş olur; yönetici olmayan bir Jellyfin kullanıcısı kullanmanız önerilir.
+- Jellyfin uygulamanın kendi adresi üzerinden açılır (`/web/...`), böylece Jellyfin'in kendi girişi ("Beni Hatırla") tarayıcıda kalıcı olur.
 - Eski davranış (Jellyfin'i doğrudan kendi adresinden iframe ile açmak) için `JELLYFIN_PROXY=0`.

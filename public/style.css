@@ -359,21 +359,6 @@ body.platform-tesla video::cue { font-size: 1.35em; }
   .mv-row button { padding: 8px 10px; min-width: 40px; }
 }
 
-/* ===== Jellyfin hesabı ===== */
-.jf-gear {
-  position: absolute; left: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 5;
-  width: 34px; height: 34px; border-radius: 50%; border: 1px solid #555; background: rgba(0,0,0,0.5); color: #ccc;
-  font-size: 16px; opacity: 0.6; cursor: pointer;
-}
-.jf-gear:hover { opacity: 1; }
-.jf-setup { position: absolute; inset: 0; z-index: 20; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; padding: 16px; }
-.jf-box { background: #1a1a1a; border: 1px solid #333; border-radius: 14px; padding: 20px; width: 100%; max-width: 360px; }
-.jf-box h3 { margin: 0 0 6px; }
-.jf-box p { color: #aaa; font-size: 14px; margin: 0 0 14px; }
-.jf-box input { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #444; background: #0d0d0d; color: #eee; font-size: 16px; }
-.jf-box button { width: 100%; padding: 12px; margin-bottom: 8px; border: none; border-radius: 8px; background: #2b7cff; color: #fff; font-weight: 600; font-size: 15px; cursor: pointer; }
-.jf-box .jf-secondary { background: #2a2a2a; color: #ccc; font-weight: 400; }
-
 /* ===== iPhone dik ekran: video üstte, liste altında (çekmece yerine) ===== */
 @media (orientation: portrait) and (max-width: 600px) {
   body.platform-mobile:not(.fs-on) .tab-btn { padding: 10px 4px; font-size: 14px; }

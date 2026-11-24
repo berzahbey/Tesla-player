@@ -391,6 +391,21 @@ function playChannel(name, url) {
     hls.attachMedia(iptvVideo);
   } else {
     iptvVideo.src = url;
+    // Adresinden film olduğu anlaşılmayanlar: süresi uzunsa ya da tarayıcı açamazsa (mkv vb.)
+    // film oynatıcıya geç (sarma, ses dili, altyazı; açılamayanı sunucu çevirir)
+    const token = playToken;
+    iptvVideo.addEventListener('loadedmetadata', () => {
+      if (token === playToken && isFinite(iptvVideo.duration) && iptvVideo.duration > 600) {
+        dbg('uzun süreli dosya: film oynatıcıya geçiliyor');
+        playMovie(url, name);
+      }
+    }, { once: true });
+    iptvVideo.addEventListener('error', () => {
+      if (token === playToken && iptvVideo.getAttribute('src')) {
+        dbg('tarayıcı açamadı: film oynatıcıyla (sunucu) deneniyor');
+        playMovie(url, name);
+      }
+    }, { once: true });
   }
   iptvVideo.play().catch(() => {});
   saveStateField('/api/state/last-channel', { name, url });
@@ -2077,77 +2092,14 @@ if ('mediaSession' in navigator) {
   set('seekto', d => { if (d && d.seekTime != null) seekAnyTo(d.seekTime); });
 }
 
-// ===================== Jellyfin: bir kere gir, her cihazda otomatik giriş =====================
-const jfFrame = document.getElementById('jellyfin-frame');
-const jfSetup = document.getElementById('jf-setup');
-function jfDeviceName() {
-  const ua = navigator.userAgent;
-  return currentPlatform === 'tesla' ? 'Tesla' : /iPhone/.test(ua) ? 'iPhone' : (/iPad/.test(ua) || isIOS) ? 'iPad' : /Mac/.test(ua) ? 'Mac' : 'Tarayıcı';
+// ===================== Jellyfin =====================
+// Jellyfin uygulamanın kendi adresinden açılır (/web/...): Jellyfin'in kendi girişi ("Beni Hatırla")
+// böylece tarayıcıda kalıcı olur, her açılışta tekrar sorulmaz.
+function setupJellyfin(cfg) {
+  const frame = document.getElementById('jellyfin-frame');
+  if (cfg.jellyfinProxy) frame.src = '/web/index.html';
+  else if (cfg.jellyfinUrl) frame.src = cfg.jellyfinUrl;
 }
-// Jellyfin'in kendi giriş kaydını (bu adreste) hazırla; Jellyfin açılınca giriş yapılmış olur
-async function jfSeedLogin(force) {
-  let creds = null;
-  try { creds = JSON.parse(localStorage.getItem('jellyfin_credentials') || 'null'); } catch {}
-  const servers = (creds && Array.isArray(creds.Servers)) ? creds.Servers : [];
-  const here = servers.find(x => x.ManualAddress === location.origin || x.LocalAddress === location.origin);
-  if (!force && here && here.AccessToken && here.UserId) {
-    const ok = await fetch('/Users/' + here.UserId, { headers: { 'X-Emby-Token': here.AccessToken } }).then(r => r.status !== 401).catch(() => true);
-    if (ok) return true;
-  }
-  let deviceId = null;
-  try { deviceId = localStorage.getItem('_deviceId2'); } catch {}
-  if (!deviceId) {
-    deviceId = btoa([navigator.userAgent, Date.now()].join('|')).replace(/=/g, '1');
-    try { localStorage.setItem('_deviceId2', deviceId); } catch {}
-  }
-  const r = await postJson('/api/jellyfin/autologin', { deviceId, device: jfDeviceName() });
-  if (!r.ok) { showToast(r.error || 'Jellyfin girişi yapılamadı'); return false; }
-  const entry = { Id: r.serverId, Name: (here && here.Name) || 'Jellyfin', ManualAddress: location.origin, LocalAddress: location.origin,
-    manualAddressOnly: true, AccessToken: r.accessToken, UserId: r.userId, DateLastAccessed: Date.now(), LastConnectionMode: 2 };
-  try {
-    localStorage.setItem('jellyfin_credentials', JSON.stringify({ Servers: [entry, ...servers.filter(x => x.Id !== r.serverId && x !== here)] }));
-    localStorage.setItem('enableAutoLogin', 'true');
-  } catch {}
-  return true;
-}
-let jfStatus = {};
-function jfShowSetup() {
-  document.getElementById('jf-remove').style.display = jfStatus.configured ? '' : 'none';
-  document.getElementById('jf-setup-text').textContent = jfStatus.configured
-    ? 'Kayıtlı hesap: ' + jfStatus.username + '. Değiştirmek için yeni bilgileri gir.'
-    : 'Bir kere gir; Tesla, iPhone ve Mac\'te otomatik giriş yapılsın.';
-  document.getElementById('jf-user').value = jfStatus.username || '';
-  document.getElementById('jf-pass').value = '';
-  jfSetup.style.display = 'flex';
-}
-async function setupJellyfin(cfg) {
-  if (!cfg.jellyfinProxy) { if (cfg.jellyfinUrl) jfFrame.src = cfg.jellyfinUrl; return; }
-  jfStatus = await fetch('/api/jellyfin/status').then(r => r.json()).catch(() => ({}));
-  document.getElementById('jf-gear').style.display = '';
-  document.getElementById('jf-gear').onclick = jfShowSetup;
-  if (jfStatus.configured) await jfSeedLogin(false);
-  else if (!lsGet('tp-jf-skip', false)) jfShowSetup();
-  jfFrame.src = '/web/index.html';
-}
-document.getElementById('jf-save').addEventListener('click', async () => {
-  const username = document.getElementById('jf-user').value.trim();
-  const password = document.getElementById('jf-pass').value;
-  const r = await postJson('/api/jellyfin/account', { username, password });
-  if (!r.ok) return showToast(r.error || 'Kaydedilemedi');
-  jfStatus = { proxy: true, configured: true, username };
-  jfSetup.style.display = 'none';
-  showToast('Jellyfin hesabı kaydedildi');
-  await jfSeedLogin(true);
-  jfFrame.src = '/web/index.html?t=' + Date.now();
-});
-document.getElementById('jf-remove').addEventListener('click', async () => {
-  if (!confirm('Kayıtlı Jellyfin hesabı silinsin mi?')) return;
-  await postJson('/api/jellyfin/account', { remove: true });
-  jfStatus = { proxy: true, configured: false, username: '' };
-  jfSetup.style.display = 'none';
-  showToast('Kayıtlı hesap silindi');
-});
-document.getElementById('jf-close').addEventListener('click', () => { lsSet('tp-jf-skip', true); jfSetup.style.display = 'none'; });
 
 async function init() {
   // Ayarları paralel çek

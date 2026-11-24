@@ -1270,65 +1270,7 @@ app.post('/api/state/transcode-key', (req, res) => {
 
 // ---- Jellyfin: aynı adres üzerinden (player.dedplay.nl/web/...) ----
 // Jellyfin başka bir adresten iframe ile açılınca tarayıcı (özellikle iPhone/Safari ve Tesla)
-// girişi saklamıyordu. Aynı adresten açılınca giriş normal site gibi kalır; ayrıca hesap bir kere
-// sunucuya kaydedilir ve her cihazda otomatik giriş yapılır.
-function jfConfigured() { return !!(state.jellyfin && state.jellyfin.username); }
-function jfAuthHeader(deviceId, device, token) {
-  const clean = v => String(v || '').replace(/["\r\n]/g, '').slice(0, 120);
-  return `MediaBrowser Client="Jellyfin Web", Device="${clean(device) || 'Tesla Player'}", DeviceId="${clean(deviceId) || 'tesla-player'}", Version="10.10.0"` +
-    (token ? `, Token="${clean(token)}"` : '');
-}
-function jfRequest(method, p, headers, body) {
-  return new Promise((resolve, reject) => {
-    const u = new URL(JF_UPSTREAM + p);
-    const mod = u.protocol === 'https:' ? https : http;
-    const data = body ? Buffer.from(JSON.stringify(body)) : null;
-    const r = mod.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method,
-      headers: { ...(headers || {}), ...(data ? { 'Content-Type': 'application/json', 'Content-Length': data.length } : {}) } }, resp => {
-      let out = '';
-      resp.setEncoding('utf8');
-      resp.on('data', c => { out += c; });
-      resp.on('end', () => { let j = null; try { j = JSON.parse(out); } catch {} resolve({ status: resp.statusCode, json: j }); });
-    });
-    r.setTimeout(15000, () => r.destroy(new Error('zaman aşımı')));
-    r.on('error', reject);
-    if (data) r.write(data);
-    r.end();
-  });
-}
-app.get('/api/jellyfin/status', (req, res) => {
-  res.json({ proxy: JF_PROXY, configured: jfConfigured(), username: jfConfigured() ? state.jellyfin.username : '' });
-});
-// Hesabı kaydet (önce Jellyfin'de dener; yanlışsa kaydetmez)
-app.post('/api/jellyfin/account', async (req, res) => {
-  const b = req.body || {};
-  if (b.remove) { delete state.jellyfin; saveState(state); return res.json({ ok: true }); }
-  const username = String(b.username || '').trim();
-  const password = String(b.password || '');
-  if (!JF_PROXY) return res.status(400).json({ error: 'JELLYFIN_URL ayarlı değil' });
-  if (!username) return res.status(400).json({ error: 'Kullanıcı adı boş' });
-  try {
-    const r = await jfRequest('POST', '/Users/AuthenticateByName', { 'X-Emby-Authorization': jfAuthHeader('tesla-player-check', 'Tesla Player') }, { Username: username, Pw: password });
-    if (r.status !== 200 || !r.json || !r.json.AccessToken) return res.status(401).json({ error: 'Kullanıcı adı veya şifre yanlış' });
-    // Deneme oturumunu kapat (cihaz listesinde fazladan kayıt kalmasın)
-    jfRequest('POST', '/Sessions/Logout', { 'X-Emby-Authorization': jfAuthHeader('tesla-player-check', 'Tesla Player', r.json.AccessToken) }).catch(() => {});
-    state.jellyfin = { username, password };
-    saveState(state);
-    res.json({ ok: true });
-  } catch (e) { res.status(502).json({ error: 'Jellyfin\'e ulaşılamadı: ' + e.message }); }
-});
-// Bu cihaz için giriş yap: Jellyfin'in kendi cihaz kimliğiyle token al (şifre tarayıcıya gitmez)
-app.post('/api/jellyfin/autologin', async (req, res) => {
-  if (!JF_PROXY || !jfConfigured()) return res.status(400).json({ error: 'Kayıtlı Jellyfin hesabı yok' });
-  const b = req.body || {};
-  try {
-    const r = await jfRequest('POST', '/Users/AuthenticateByName', { 'X-Emby-Authorization': jfAuthHeader(b.deviceId, b.device) },
-      { Username: state.jellyfin.username, Pw: state.jellyfin.password });
-    if (r.status !== 200 || !r.json || !r.json.AccessToken) return res.status(401).json({ error: 'Kayıtlı Jellyfin şifresi artık geçmiyor' });
-    res.json({ ok: true, accessToken: r.json.AccessToken, serverId: r.json.ServerId, userId: r.json.User && r.json.User.Id });
-  } catch (e) { res.status(502).json({ error: 'Jellyfin\'e ulaşılamadı: ' + e.message }); }
-});
-
+// girişi saklamıyordu. Aynı adresten açılınca Jellyfin'in kendi girişi ("Beni Hatırla") kalıcı olur.
 // Kalan bütün istekler (/web, /Users, /Items, /socket ...) Jellyfin'e aktarılır
 function jfTarget(url) { return new URL(JF_UPSTREAM + url); }
 app.use((req, res, next) => {
