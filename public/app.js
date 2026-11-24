@@ -506,9 +506,16 @@ let currentLiveItem = null;
 // Bu cihaza özel (localStorage): bir kere çözme hatası görülünce 1080p kanallar sunucuda 720p'ye çevrilir.
 function lsGet(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch { return d; } }
 function lsSet(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
-let lowResDevice = lsGet('tp-lowres', false);
-let lowResKeys = lsGet('tp-lowres-keys', []);
+// TV (Mi Box / Google TV) 1080p'yi çözebiliyor: eski donmalar sırasında konan "düşük çözünürlük"
+// işaretini bir kere sil ve TV'de bu işareti kalıcı yapma (yoksa kanallar gereksiz yere sunucuda çevriliyordu)
+if (currentPlatform === 'tv' && !lsGet('tp-tv-lowres-reset1', false)) {
+  lsSet('tp-lowres', false); lsSet('tp-lowres-keys', []); lsSet('tp-tv-lowres-reset1', true);
+}
+let lowResDevice = currentPlatform === 'tv' ? false : lsGet('tp-lowres', false);
+let lowResKeys = currentPlatform === 'tv' ? [] : lsGet('tp-lowres-keys', []);
+const tvDecodeRetried = new Set();
 function markLowRes(key) {
+  if (currentPlatform === 'tv') { dbg('TV: çözme hatası (işaret kalıcı yapılmadı)'); return; }
   if (!lowResDevice) { lowResDevice = true; lsSet('tp-lowres', true); dbg('cihaz 1080p çözemiyor -> 720p moduna geçildi'); }
   if (key && !lowResKeys.includes(key)) { lowResKeys.push(key); if (lowResKeys.length > 300) lowResKeys.shift(); lsSet('tp-lowres-keys', lowResKeys); }
 }
@@ -582,6 +589,16 @@ function playXtreamLive(item) {
     // Cihaz bu kanalın görüntüsünü çözemiyor (ör. tablette 1080p) -> sunucuda 720p'ye çevir
     onDecodeError = () => {
       if (token !== playToken || sentToServer) return;
+      // TV: tek seferlik bir çözme hatası (ör. yayındaki bozuk kare) için önce doğrudan bir kez daha dene
+      if (currentPlatform === 'tv' && !tvDecodeRetried.has(key)) {
+        tvDecodeRetried.add(key);
+        dbg('TV: çözme hatası -> doğrudan bir kez daha');
+        sentToServer = true;
+        stopPlayback();
+        playXtreamLive(item);
+        return;
+      }
+      if (currentPlatform === 'tv') { dbg('TV: çözme hatası tekrarladı -> sunucu dönüştürmesi'); return toServer(); }
       // Mac/iPhone 1080p'yi çözebiliyor: hata yayının kendisinde (ör. bozuk H.264) -> sadece bu kanal sunucuda
       if (isAppleNative()) { dbg('çözme hatası (Safari) -> sunucu dönüştürmesi'); return toServer(); }
       dbg('çözme hatası -> sunucuda 720p');
