@@ -316,14 +316,14 @@ body.fs-on #iptv-side-panel .list-picker { display: none; }
 
 /* ===== Film oynatıcı kontrolleri ===== */
 .mv-controls { display: none; }
-.player-panel.movie-mode .mv-controls {
+.movie-mode .mv-controls {
   display: block; position: absolute; left: 0; right: 0; bottom: 0; z-index: 12;
   padding: 28px 12px calc(10px + env(safe-area-inset-bottom, 0px));
   padding-left: calc(12px + env(safe-area-inset-left, 0px)); padding-right: calc(12px + env(safe-area-inset-right, 0px));
   background: linear-gradient(transparent, rgba(0,0,0,0.85) 45%);
   color: #fff; opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
 }
-.player-panel.movie-mode .mv-controls.show { opacity: 1; pointer-events: auto; }
+.movie-mode .mv-controls.show { opacity: 1; pointer-events: auto; }
 .mv-title { font-size: 14px; color: #ddd; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mv-seekrow { display: flex; align-items: center; gap: 10px; font-size: 13px; font-variant-numeric: tabular-nums; }
 #mv-seek { flex: 1; min-width: 0; accent-color: #2b7cff; height: 28px; margin: 0; }
@@ -390,7 +390,7 @@ body.platform-tesla video::cue { font-size: 1.35em; }
   body.platform-mobile:not(.fs-on) .xt-item img { width: 24px; height: 24px; }
   body.platform-mobile:not(.fs-on) .fullscreen-btn { top: 8px; right: 8px; width: 36px; height: 36px; font-size: 16px; }
   body.platform-mobile:not(.fs-on) .mv-title { display: none; }
-  body.platform-mobile:not(.fs-on) .player-panel.movie-mode .mv-controls { padding-top: 16px; }
+  body.platform-mobile:not(.fs-on) .movie-mode .mv-controls { padding-top: 16px; }
   body.platform-mobile:not(.fs-on) .mv-row button { min-height: 34px; padding: 5px 8px; font-size: 14px; }
   body.platform-mobile:not(.fs-on) .mv-row .mv-big { font-size: 17px; min-width: 44px; }
   /* Menü videonun altına (listenin üstüne) açılsın, küçük videoda kesilmesin */
