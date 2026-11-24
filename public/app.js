@@ -2445,7 +2445,7 @@ const isTV = currentPlatform === 'tv';
 // Android, boş videoda büyük bir "oynat" resmi gösteriyor: siyah kalsın
 const BLANK_POSTER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 ['iptv-video', 'mp-video', 'yt-video'].forEach(id => { const v = document.getElementById(id); if (v) v.setAttribute('poster', BLANK_POSTER); });
-const TV_SEL = 'button, input, select, .channel-item, .xt-item, .yt-item, .mp-item, .player-panel, .mp-player';
+const TV_SEL = 'button, input, select, .channel-item, .xt-item, .yt-item, .mp-item, .player-panel, .mp-player, #jellyfin-frame';
 let tvWantFs = 0;
 function tvVisible(el) {
   if (el.disabled) return false;
@@ -2577,6 +2577,16 @@ function tvClosePopup() { if (tvPopup) { tvPopup.box.remove(); tvPopup = null; }
 
 // Geri tuşu. true: uygulama içinde bir şey yapıldı; false: TV uygulaması kapanabilir
 function tvBack() {
+  // Jellyfin açıkken: önce Jellyfin'in içinde geri git; ana sayfasındaysa sekmelere çık
+  const jf = document.getElementById('jellyfin-frame');
+  if (document.activeElement === jf && tvActiveTab().id === 'jellyfin') {
+    try {
+      const hash = String(jf.contentWindow.location.hash || '');
+      if (hash && !/home|login|selectserver|startup/i.test(hash)) { jf.contentWindow.history.back(); return true; }
+    } catch {}
+    tvFocus(document.querySelector('.tab-btn.active'));
+    return true;
+  }
   if (tvPopup) { const s = tvPopup.sel; tvClosePopup(); tvFocus(s); return true; }
   if (mvMenu.classList.contains('open')) { hideMovieMenu(); tvFocus(document.getElementById('mv-sub-btn')); return true; }
   const acc = document.getElementById('yt-account-box');
@@ -2665,6 +2675,8 @@ if (isTV) {
     if (tvWantFs && Date.now() - tvWantFs < 20000 && v.closest('.tab-content.active')) { tvWantFs = 0; tvEnterFs(); }
   }); });
   document.addEventListener('keydown', tvKey, true);
+  // Sayfa kaymasın: sekmeler hep görünsün
+  window.addEventListener('scroll', () => { if (window.scrollY || window.scrollX) window.scrollTo(0, 0); });
   // TV uygulamasının kendi ayarları (sunucu adresi, güncelleme)
   if (window.TPTV && window.TPTV.openSettings) {
     const b = document.createElement('button');
@@ -2690,8 +2702,23 @@ if (isTV) {
 // ===================== Jellyfin =====================
 // Jellyfin uygulamanın kendi adresinden açılır (/web/...): Jellyfin'in kendi girişi ("Beni Hatırla")
 // böylece tarayıcıda kalıcı olur, her açılışta tekrar sorulmaz.
+// TV: Jellyfin'in TV görünümü 1920 genişliğe göre; Mi Box tarayıcısı ekranı 960 genişlikte bildiriyor
+// ve her şey iki kat büyük çıkıyordu. Jellyfin'i geniş ekran gibi çizip küçült.
+function fitJellyfinForTv() {
+  if (currentPlatform !== 'tv') return;
+  const frame = document.getElementById('jellyfin-frame');
+  const k = Math.min(1, window.innerWidth / 1600);
+  frame.style.width = (100 / k) + '%';
+  frame.style.height = (100 / k) + '%';
+  frame.style.transform = `scale(${k})`;
+  frame.style.transformOrigin = '0 0';
+  frame.style.flex = '0 0 auto';
+  frame.style.maxWidth = 'none';
+}
+window.addEventListener('resize', fitJellyfinForTv);
 function setupJellyfin(cfg) {
   const frame = document.getElementById('jellyfin-frame');
+  fitJellyfinForTv();
   if (cfg.jellyfinProxy) frame.src = '/web/index.html';
   else if (cfg.jellyfinUrl) frame.src = cfg.jellyfinUrl;
 }

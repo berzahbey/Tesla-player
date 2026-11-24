@@ -476,3 +476,7 @@ body.platform-tv.fs-on #iptv-side-panel #xt-breadcrumb { display: block !importa
 .side-panel .mode-btn:not(.active) { background: #2a2a2a; color: #bbb; border: 1px solid #444; }
 .side-panel .mode-btn.active { background: #2b7cff; color: #fff; }
 body.platform-tv .side-panel .mode-btn:focus { outline: 3px solid #fff; outline-offset: -3px; background: #2b7cff99; color: #fff; }
+
+/* TV: sayfa kaymasın (sekmeler hep üstte), Jellyfin kendi içinde kaysın */
+body.platform-tv, html:has(body.platform-tv) { overflow: hidden; }
+body.platform-tv #jellyfin { overflow: hidden; }
