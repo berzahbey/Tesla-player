@@ -821,7 +821,9 @@ app.get('/api/xtream-stream', async (req, res) => {
   if (req.query.remux === '1') return remuxStream(targetUrl, req, res);
 
   const headers = { 'User-Agent': uaFor(targetUrl) };
-  if (req.headers.range) headers['Range'] = req.headers.range;
+  // "bytes=0-" (ffmpeg ve tarayıcılar baştan isterken gönderir) aslında dosyanın tamamı demek
+  const partial = req.headers.range && !/^bytes=0-\s*$/.test(req.headers.range);
+  if (partial) headers['Range'] = req.headers.range;
 
   let up;
   try {
@@ -843,22 +845,90 @@ app.get('/api/xtream-stream', async (req, res) => {
   const contentType = String(up.headers['content-type'] || '');
   const isM3U8 = up.finalUrl.toLowerCase().includes('.m3u8') || contentType.toLowerCase().includes('mpegurl');
 
+  const sendPlaylist = text => {
+    const rewritten = text.split('\n').map(line => {
+      const trimmed = line.trim();
+      if (!trimmed) return line;
+      // Etiket içindeki adresler de (şifre anahtarı, başlangıç parçası, ses/altyazı listeleri) sunucu üzerinden
+      if (trimmed.startsWith('#')) return line.replace(/URI="([^"]+)"/g, (m, u) => `URI="/api/xtream-stream?url=${encodeURIComponent(new URL(u, up.finalUrl).href)}"`);
+      const absolute = new URL(trimmed, up.finalUrl).href;
+      // Resim gibi adlandırılmış parça (.png/.jpg/.gif): ffmpeg adından resim sanmasın
+      const hint = /\.(png|jpe?g|gif|webp|bmp|ico)(\?|#|$)/i.test(absolute) && !/^#/.test(trimmed) ? '&as=.ts' : '';
+      return '/api/xtream-stream?url=' + encodeURIComponent(absolute) + hint;
+    }).join('\n');
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(rewritten);
+  };
+
   if (isM3U8 && up.statusCode < 400) {
     let text = '';
     up.setEncoding('utf8');
     up.on('data', c => { text += c; });
-    up.on('end', () => {
-      const rewritten = text.split('\n').map(line => {
-        const trimmed = line.trim();
-        if (!trimmed) return line;
-        // Etiket içindeki adresler de (şifre anahtarı, başlangıç parçası, ses/altyazı listeleri) sunucu üzerinden
-        if (trimmed.startsWith('#')) return line.replace(/URI="([^"]+)"/g, (m, u) => `URI="/api/xtream-stream?url=${encodeURIComponent(new URL(u, up.finalUrl).href)}"`);
-        const absolute = new URL(trimmed, up.finalUrl).href;
-        return '/api/xtream-stream?url=' + encodeURIComponent(absolute);
-      }).join('\n');
-      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    up.on('end', () => sendPlaylist(text));
+    return;
+  }
+
+  // Bazı film siteleri listeleri ve parçaları resim dosyası gibi gösteriyor (.gif/.png, başında sahte
+  // resim baytları). Safari bunu tolere ediyor, hls.js ve ffmpeg etmiyor. İlk baytlara bak:
+  // liste ise liste gibi yeniden yaz; sahte resim başlığı varsa MPEG-TS başlangıcına kadar at.
+  if (!partial && up.statusCode < 400) {
+    const chunks = [];
+    let len = 0;
+    let mode = null; // 'playlist' | 'pass' | sayı (atılacak bayt)
+    const isImageMagic = b => (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46) || (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E)
+      || (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) || (b[0] === 0x42 && b[1] === 0x4D) || /^image\//i.test(contentType);
+    const findTs = buf => {
+      for (let i = 0; i + 188 * 4 < buf.length; i++) {
+        if (buf[i] === 0x47 && buf[i + 188] === 0x47 && buf[i + 376] === 0x47 && buf[i + 564] === 0x47 && buf[i + 752] === 0x47) return i;
+      }
+      return -1;
+    };
+    const decide = final => {
+      const buf = Buffer.concat(chunks, len);
+      if (buf.length < 16 && !final) return null;
+      const head = buf.slice(0, 32).toString('latin1').replace(/^\uFEFF/, '').trimStart();
+      if (head.startsWith('#EXTM3U')) return 'playlist';
+      if (buf[0] === 0x47 || !isImageMagic(buf)) return 'pass';
+      const k = findTs(buf);
+      if (k > 0) return k;
+      if (final || len > 2 * 1024 * 1024) return 'pass';
+      return null;
+    };
+    const act = () => {
+      const buf = Buffer.concat(chunks, len);
+      up.removeAllListeners('data');
+      if (mode === 'playlist') {
+        let text = buf.toString('utf8');
+        up.setEncoding('utf8');
+        up.on('data', c => { text += c; });
+        up.on('end', () => sendPlaylist(text));
+        if (up.complete) sendPlaylist(text);
+        return;
+      }
+      res.status(up.statusCode);
       res.setHeader('Cache-Control', 'no-store');
-      res.send(rewritten);
+      if (typeof mode === 'number') {
+        res.setHeader('Content-Type', 'video/mp2t');
+        res.write(buf.slice(mode));
+      } else {
+        ['content-type', 'content-length', 'accept-ranges'].forEach(h => { if (up.headers[h]) res.setHeader(h, up.headers[h]); });
+        res.write(buf);
+      }
+      if (up.complete) return res.end();
+      up.pipe(res);
+    };
+    up.on('data', c => {
+      chunks.push(c); len += c.length;
+      if (mode !== null) return;
+      mode = decide(false);
+      if (mode !== null) act();
+    });
+    up.on('end', () => {
+      if (mode !== null) return;
+      mode = decide(true);
+      act();
+      res.end();
     });
     return;
   }
