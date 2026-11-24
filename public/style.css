@@ -471,3 +471,8 @@ body.platform-tv.fs-on #iptv-side-panel .xtream-section-switch,
 body.platform-tv.fs-on #iptv-side-panel .list-picker,
 body.platform-tv.fs-on #iptv-side-panel #m3u-mode > .list-picker { display: flex !important; }
 body.platform-tv.fs-on #iptv-side-panel #xt-breadcrumb { display: block !important; }
+
+/* M3U / Xtream: hangisi açık belli olsun (genel mavi düğme kuralı ikisini de maviye boyuyordu) */
+.side-panel .mode-btn:not(.active) { background: #2a2a2a; color: #bbb; border: 1px solid #444; }
+.side-panel .mode-btn.active { background: #2b7cff; color: #fff; }
+body.platform-tv .side-panel .mode-btn:focus { outline: 3px solid #fff; outline-offset: -3px; background: #2b7cff99; color: #fff; }
