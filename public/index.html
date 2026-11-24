@@ -31,19 +31,19 @@
     </div>
 
     <div id="m3u-mode">
-      <h3>Listelerim</h3>
       <div class="list-picker">
         <select id="m3u-list-select"></select>
+        <button id="m3u-list-add" title="Yeni liste ekle">＋</button>
         <button id="m3u-list-rename" title="Adını değiştir">✎</button>
         <button id="m3u-list-delete" title="Listeyi sil">🗑</button>
       </div>
-      <h3>Yeni liste ekle</h3>
-      <input id="m3u-url" placeholder="https://.../liste.m3u">
-      <button id="m3u-load-btn">Linkten Yükle</button>
-      <p class="or-text">veya dosya seçin</p>
-      <input type="file" id="m3u-file" accept=".m3u,.m3u8">
-      <button id="m3u-file-load-btn">Dosyadan Yükle</button>
-      <h3>Kanal Listesi</h3>
+      <div id="m3u-add-form" style="display:none;">
+        <input id="m3u-url" placeholder="https://.../liste.m3u">
+        <button id="m3u-load-btn">Linkten Yükle</button>
+        <p class="or-text">veya dosya seçin</p>
+        <input type="file" id="m3u-file" accept=".m3u,.m3u8">
+        <button id="m3u-file-load-btn">Dosyadan Yükle</button>
+      </div>
       <div id="m3u-channel-list"></div>
     </div>
 
@@ -75,13 +75,45 @@
   </div>
   <div class="player-panel" id="iptv-player-panel">
     <button class="fullscreen-btn" data-target="iptv-player-panel">⛶</button>
-    <video id="iptv-video" controls autoplay playsinline></video>
+    <video id="iptv-video" controls autoplay playsinline x-webkit-airplay="allow"></video>
     <div id="iptv-status" class="player-status"></div>
+    <div id="mv-controls" class="mv-controls">
+      <div id="mv-title" class="mv-title"></div>
+      <div class="mv-seekrow">
+        <span id="mv-cur">0:00</span>
+        <input type="range" id="mv-seek" min="0" max="1000" step="1" value="0">
+        <span id="mv-dur">0:00</span>
+      </div>
+      <div class="mv-row">
+        <button id="mv-list" title="Liste">☰</button>
+        <button id="mv-back" title="10 sn geri">↺ 10</button>
+        <button id="mv-play" class="mv-big" title="Oynat / Durdur">⏸</button>
+        <button id="mv-fwd" title="30 sn ileri">30 ↻</button>
+        <span class="mv-spacer"></span>
+        <button id="mv-audio-btn" title="Ses dili">🔊<span class="mv-lbl"> Ses</span></button>
+        <button id="mv-sub-btn" title="Altyazı">💬<span class="mv-lbl"> Altyazı</span></button>
+        <button id="mv-pip" title="Resim içinde resim" style="display:none">⧉</button>
+      </div>
+      <div id="mv-menu" class="mv-menu"></div>
+    </div>
+    <input type="file" id="mv-sub-file" accept=".srt,.vtt,text/vtt,application/x-subrip" style="display:none">
   </div>
 </div>
 
 <div id="jellyfin" class="tab-content">
-  <iframe id="jellyfin-frame" src="" allowfullscreen></iframe>
+  <iframe id="jellyfin-frame" src="" allowfullscreen allow="autoplay; fullscreen; picture-in-picture"></iframe>
+  <button id="jf-gear" class="jf-gear" title="Jellyfin hesabı" style="display:none">⚙</button>
+  <div id="jf-setup" class="jf-setup" style="display:none">
+    <div class="jf-box">
+      <h3>Jellyfin hesabı</h3>
+      <p id="jf-setup-text">Bir kere gir; Tesla, iPhone ve Mac'te otomatik giriş yapılsın.</p>
+      <input id="jf-user" placeholder="Kullanıcı adı" autocomplete="username" autocapitalize="off">
+      <input id="jf-pass" type="password" placeholder="Şifre" autocomplete="current-password">
+      <button id="jf-save">Kaydet ve giriş yap</button>
+      <button id="jf-remove" class="jf-secondary" style="display:none">Kayıtlı hesabı sil</button>
+      <button id="jf-close" class="jf-secondary">Kapat</button>
+    </div>
+  </div>
 </div>
 
 <div id="mediaplayer" class="tab-content">
@@ -99,6 +131,7 @@
   </div>
 </div>
 
+<audio id="bg-audio" preload="auto" playsinline></audio>
 <div id="toast" class="toast"></div>
 <script src="app.js"></script>
 </body>

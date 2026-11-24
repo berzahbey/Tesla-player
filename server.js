@@ -110,10 +110,20 @@ function favVisible(f) {
 }
 function favScope(kind) { return kind === 'xtream' ? state.activeXtream : kind === 'm3u' ? state.activeM3u : ''; }
 function visibleFavs() { return (state.favorites || []).filter(favVisible); }
+// Her favori hangi listeye/hesaba ait olduğunu taşır; istemci kendi gösterdiği listeye göre süzer.
+// (Sunucudaki "aktif liste" tek: başka bir cihaz liste değiştirince favoriler yanlış listeye yazılıyordu.)
+function allFavs() { return (state.favorites || []).map(f => ({ ...f, acct: favAcct(f) })); }
+function reqScope(kind, acct) {
+  acct = acct == null ? '' : String(acct);
+  if (kind === 'm3u' && state.m3uLists.some(l => l.id === acct)) return acct;
+  if (kind === 'xtream' && state.xtreamAccounts.some(a => a.id === acct)) return acct;
+  return favScope(kind);
+}
 function publicState() {
+  const { jellyfin, ...rest } = state;
   return {
-    ...state,
-    favorites: visibleFavs(),
+    ...rest,
+    favorites: allFavs(),
     xtreamAccounts: state.xtreamAccounts.map(a => ({ id: a.id, name: a.name, server: a.server, username: a.username }))
   };
 }
@@ -128,7 +138,9 @@ if (state.transcodeKeysVersion !== 2) {
 process.on('uncaughtException', err => console.error('Beklenmeyen hata (uygulama çalışmaya devam ediyor):', err && err.message));
 process.on('unhandledRejection', err => console.error('Beklenmeyen hata (uygulama çalışmaya devam ediyor):', err && err.message));
 
-app.use(express.json());
+// JSON gövdesini sadece kendi /api isteklerimizde çöz; diğerleri (Jellyfin) olduğu gibi aktarılır
+const jsonBody = express.json();
+app.use((req, res, next) => (req.path.startsWith('/api/') ? jsonBody(req, res, next) : next()));
 // index.html: dosya adlarına sürüm ekle, böylece güncellemeden sonra tarayıcı/Cloudflare eski app.js'i kullanmaz
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const BUILD_ID = require('crypto').createHash('md5')
@@ -188,6 +200,7 @@ function remuxStream(source, req, res) {
 app.get('/api/config', (req, res) => {
   res.json({
     jellyfinUrl: process.env.JELLYFIN_URL || '',
+    jellyfinProxy: JF_PROXY,
     xtreamEnabled: !!(XTREAM_SERVER && XTREAM_USERNAME && XTREAM_PASSWORD)
   });
 });
@@ -210,7 +223,7 @@ function m3uLists() { return state.m3uLists.map(l => ({ id: l.id, name: l.name, 
 function m3uReply(res, extra) {
   syncM3uSource();
   saveState(state);
-  res.json({ ok: true, m3uLists: m3uLists(), activeM3u: state.activeM3u, favorites: visibleFavs(), favoritesManualOrder: state.favoritesManualOrder, ...(extra || {}) });
+  res.json({ ok: true, m3uLists: m3uLists(), activeM3u: state.activeM3u, favorites: allFavs(), favoritesManualOrder: state.favoritesManualOrder, ...(extra || {}) });
 }
 
 app.post('/api/state/m3u-url', (req, res) => {
@@ -279,7 +292,7 @@ function xtreamAccountsReply(res) {
     activeXtream: state.activeXtream,
     xtreamEnabled: !!XTREAM_SERVER,
     xtreamAccounts: publicState().xtreamAccounts,
-    favorites: visibleFavs()
+    favorites: allFavs()
   });
 }
 
@@ -401,16 +414,17 @@ app.post('/api/state/favorite-toggle', async (req, res) => {
   const it = (req.body && req.body.item) || {};
   if (!it.kind || !it.id) return res.status(400).json({ error: 'kind ve id gerekli' });
   state.favorites = Array.isArray(state.favorites) ? state.favorites : [];
-  const i = state.favorites.findIndex(f => f.kind === it.kind && f.id === it.id && favVisible(f));
+  const scope = reqScope(it.kind, it.acct);
+  const i = state.favorites.findIndex(f => f.kind === it.kind && f.id === String(it.id) && favAcct(f) === scope);
   let added;
   if (i >= 0) { state.favorites.splice(i, 1); added = false; }
   else {
     const fav = {
-      kind: it.kind, id: String(it.id), acct: favScope(it.kind), name: String(it.name || ''), url: String(it.url || ''),
+      kind: it.kind, id: String(it.id), acct: scope, name: String(it.name || ''), url: String(it.url || ''),
       tsUrl: String(it.tsUrl || ''), icon: String(it.icon || ''),
       num: Number.isFinite(Number(it.num)) && it.num !== null && it.num !== '' ? Number(it.num) : null,
       // Grup: Xtream kategorisi ya da M3U group-title; favoriler grup grup ve grubun kendi sırasıyla durur
-      group: it.kind === 'm3u' ? String(state.activeM3u) : (it.group != null ? String(it.group) : ''), groupName: String(it.groupName || ''),
+      group: it.kind === 'm3u' ? scope : (it.group != null ? String(it.group) : ''), groupName: String(it.groupName || ''),
       groupPos: Number.isFinite(Number(it.groupPos)) && it.groupPos !== null && it.groupPos !== '' ? Number(it.groupPos) : null
     };
     if (fav.kind === 'xtream' && fav.group) {
@@ -422,7 +436,30 @@ app.post('/api/state/favorite-toggle', async (req, res) => {
     added = true;
   }
   saveState(state);
-  res.json({ ok: true, added, favorites: visibleFavs() });
+  res.json({ ok: true, added, favorites: allFavs() });
+});
+
+// Yanlış listeye yazılmış M3U favorilerini düzelt: istemci listeyi yükleyince
+// release = bu listeye kayıtlı ama listede olmayan kanallar (sahipsiz kalır),
+// claim   = sahipsiz/eski favorilerden bu listede bulunanlar (bu listeye alınır)
+app.post('/api/state/m3u-fav-fix', (req, res) => {
+  const b = req.body || {};
+  const list = String(b.list || '');
+  if (!state.m3uLists.some(l => l.id === list)) return res.status(404).json({ error: 'Liste yok' });
+  const claim = new Set((Array.isArray(b.claim) ? b.claim : []).map(String));
+  const release = new Set((Array.isArray(b.release) ? b.release : []).map(String));
+  let changed = 0;
+  for (const f of state.favorites || []) {
+    if (f.kind !== 'm3u') continue;
+    const owner = favAcct(f);
+    if (release.has(f.id) && owner === list) { f.acct = '?'; f.group = '?'; changed++; }
+    else if (claim.has(f.id) && (!f.acct || f.acct === '?' || !state.m3uLists.some(l => l.id === owner))) {
+      if (state.favorites.some(g => g !== f && g.kind === 'm3u' && g.id === f.id && favAcct(g) === list)) continue;
+      f.acct = list; f.group = list; changed++;
+    }
+  }
+  if (changed) saveState(state);
+  res.json({ ok: true, changed, favorites: allFavs() });
 });
 
 // Favorilerin elle sıralanması (basılı tut + sürükle) — bir grubun içinde
@@ -432,7 +469,8 @@ app.post('/api/state/favorites-order', (req, res) => {
   const group = String(b.group || '');
   const ids = Array.isArray(b.ids) ? b.ids.map(String) : [];
   if (!kind || !ids.length) return res.status(400).json({ error: 'kind ve ids gerekli' });
-  const match = f => f.kind === kind && favVisible(f) && (f.group || '') === group;
+  const scope = reqScope(kind, b.acct);
+  const match = f => f.kind === kind && favAcct(f) === scope && (f.group || '') === group;
   const positions = [];
   state.favorites.forEach((f, i) => { if (match(f)) positions.push(i); });
   const byId = new Map(positions.map(i => [state.favorites[i].id, state.favorites[i]]));
@@ -443,7 +481,7 @@ app.post('/api/state/favorites-order', (req, res) => {
   state.favorites = next;
   state.favoritesManualOrder = { ...(state.favoritesManualOrder || {}), [kind + '|' + group]: true };
   saveState(state);
-  res.json({ ok: true, favorites: visibleFavs(), favoritesManualOrder: state.favoritesManualOrder });
+  res.json({ ok: true, favorites: allFavs(), favoritesManualOrder: state.favoritesManualOrder });
 });
 
 app.post('/api/state/xtream-category', (req, res) => {
@@ -471,6 +509,23 @@ app.post('/api/state/resume-mediaplayer', (req, res) => {
     position: req.body.position,
     label: req.body.label || req.body.path
   };
+  saveState(state);
+  res.json({ ok: true });
+});
+
+// Film kaldığı yer (her film ayrı): { url: { position, duration, label, t } }
+app.post('/api/state/resume-movie', (req, res) => {
+  const b = req.body || {};
+  const url = String(b.url || '');
+  if (!url) return res.status(400).json({ error: 'url gerekli' });
+  state.resumeMovies = state.resumeMovies && typeof state.resumeMovies === 'object' ? state.resumeMovies : {};
+  const pos = Number(b.position) || 0;
+  const dur = Number(b.duration) || 0;
+  if (b.done || pos < 10 || (dur && pos > dur - 90)) delete state.resumeMovies[url];
+  else state.resumeMovies[url] = { position: Math.round(pos), duration: Math.round(dur), label: String(b.label || ''), t: Date.now() };
+  const keys = Object.keys(state.resumeMovies);
+  if (keys.length > 300) keys.sort((a, c) => state.resumeMovies[a].t - state.resumeMovies[c].t)
+    .slice(0, keys.length - 300).forEach(k => delete state.resumeMovies[k]);
   saveState(state);
   res.json({ ok: true });
 });
@@ -731,6 +786,11 @@ app.get('/api/xtream/series-info', async (req, res) => {
 // Node'un temel http modülüyle: fetch (undici), kaynak bağlantıyı kapatınca tüm uygulamayı çökertebiliyordu
 const http = require('http');
 const https = require('https');
+// Jellyfin'e konteynerden ulaşılan adres (ev ağı, ör. http://192.168.1.10:8096). Yoksa JELLYFIN_URL kullanılır.
+const JF_UPSTREAM = (process.env.JELLYFIN_INTERNAL_URL || process.env.JELLYFIN_URL || '').replace(/\/+$/, '');
+const JF_PROXY = !!JF_UPSTREAM && process.env.JELLYFIN_PROXY !== '0';
+let JF_PUBLIC_HOST = '';
+try { JF_PUBLIC_HOST = process.env.JELLYFIN_URL ? new URL(process.env.JELLYFIN_URL).host : ''; } catch {}
 // Sağlayıcı tek bağlantıya izin veriyor: boşta açık bağlantı bırakma
 const keepAliveHttp = new http.Agent({ keepAlive: false });
 const keepAliveHttps = new https.Agent({ keepAlive: false });
@@ -910,7 +970,7 @@ function needsTranscode(streams) {
   return (v.height || 0) > TRANSCODE_MAX_HEIGHT;
 }
 
-function buildArgs({ input, isRemote, live, transcode, hw, dir, lowres }) {
+function buildArgs({ input, isRemote, live, transcode, hw, dir, lowres, start, audio, subs }) {
   // 720p ve altı: Main profil, seviye 3.1 (en eski cihazların bile çözebildiği biçim)
   const H = lowres ? Math.min(720, TRANSCODE_MAX_HEIGHT) : TRANSCODE_MAX_HEIGHT;
   lowres = H <= 720;
@@ -942,7 +1002,11 @@ function buildArgs({ input, isRemote, live, transcode, hw, dir, lowres }) {
       args.push('-re');
     }
   }
-  args.push('-analyzeduration', '2000000', '-i', input, '-map', '0:v:0?', '-map', '0:a:0?');
+  // Film: istenen saniyeden başla (ileri/geri sarma) ve seçilen ses dilini al
+  // -copyts: altyazılar filmin gerçek saatiyle yazılır (atlanan kısmın altyazıları yanlış yere düşmesin)
+  if (!live && start > 0) args.push('-ss', String(start), '-copyts');
+  const aIdx = Number.isInteger(audio) && audio >= 0 ? audio : 0;
+  args.push('-analyzeduration', '2000000', '-i', input, '-map', '0:v:0?', '-map', `0:a:${aIdx}?`);
 
   if (!transcode) {
     args.push('-c:v', 'copy');
@@ -969,6 +1033,10 @@ function buildArgs({ input, isRemote, live, transcode, hw, dir, lowres }) {
       '-hls_flags', 'independent_segments');
   }
   args.push(path.join(dir, 'index.m3u8'));
+  // Altyazılar: her metin altyazısı ayrı bir WebVTT dosyasına (film ilerledikçe dolar)
+  if (!live) for (const n of subs || []) {
+    args.push('-map', `0:s:${n}`, '-c:s', 'webvtt', '-flush_packets', '1', '-f', 'webvtt', path.join(dir, `sub_${n}.vtt`));
+  }
   return args;
 }
 
@@ -1040,12 +1108,58 @@ async function runFfmpeg(session, opts) {
   return false;
 }
 
+// ---- Film bilgisi: süre, ses dilleri, altyazılar ----
+const TEXT_SUBS = new Set(['subrip', 'srt', 'ass', 'ssa', 'webvtt', 'mov_text', 'text']);
+const mediaInfoCache = new Map();
+app.get('/api/media/info', async (req, res) => {
+  const isLocal = req.query.local === '1';
+  let input;
+  try { input = isLocal ? safeResolve(req.query.src || '') : resolveRemoteSrc(req.query.src); }
+  catch (e) { return res.status(400).json({ error: e.message }); }
+  if (!input) return res.status(400).json({ error: 'src gerekli' });
+  if (mediaInfoCache.has(input)) return res.json(mediaInfoCache.get(input));
+  const args = ['-v', 'error'];
+  if (!isLocal) args.push('-user_agent', FF_UA, '-rw_timeout', '15000000');
+  args.push('-analyzeduration', '5000000', '-probesize', '5000000',
+    '-show_entries', 'format=duration,format_name:stream=index,codec_type,codec_name,height,channels:stream_tags=language,title',
+    '-of', 'json', '-i', input);
+  const out = await new Promise(resolve => {
+    const p = spawn('ffprobe', args);
+    let o = '';
+    p.stdout.on('data', d => { o += d; });
+    const timer = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, 20000);
+    p.on('exit', () => { clearTimeout(timer); try { resolve(JSON.parse(o)); } catch { resolve(null); } });
+    p.on('error', () => { clearTimeout(timer); resolve(null); });
+  });
+  if (!out) return res.status(502).json({ error: 'Dosya bilgisi alınamadı' });
+  const streams = out.streams || [];
+  const tag = (st, k) => (st.tags && (st.tags[k] || st.tags[k.toUpperCase()])) || '';
+  const v = streams.find(st => st.codec_type === 'video');
+  const info = {
+    duration: parseFloat(out.format && out.format.duration) || 0,
+    container: (out.format && out.format.format_name) || '',
+    video: v ? { codec: v.codec_name, height: v.height || 0 } : null,
+    audio: streams.filter(st => st.codec_type === 'audio').map((st, n) => ({
+      n, codec: st.codec_name, channels: st.channels || 0, lang: tag(st, 'language'), title: tag(st, 'title')
+    })),
+    subs: streams.filter(st => st.codec_type === 'subtitle').map((st, n) => ({
+      n, codec: st.codec_name, lang: tag(st, 'language'), title: tag(st, 'title'), text: TEXT_SUBS.has(st.codec_name)
+    }))
+  };
+  mediaInfoCache.set(input, info);
+  if (mediaInfoCache.size > 300) mediaInfoCache.delete(mediaInfoCache.keys().next().value);
+  res.json(info);
+});
+
 // GET /api/session/start?src=...&local=0|1&live=0|1&mode=auto|transcode|copy
 app.get('/api/session/start', async (req, res) => {
   const isLocal = req.query.local === '1';
   const live = req.query.live === '1';
   const mode = ['auto', 'transcode', 'copy'].includes(req.query.mode) ? req.query.mode : 'copy';
   const lowres = req.query.q === '720';
+  const start = Math.max(0, parseFloat(req.query.start) || 0);
+  const audio = req.query.audio != null && req.query.audio !== '' ? parseInt(req.query.audio, 10) : 0;
+  const subs = String(req.query.subs || '').split(',').filter(x => /^\d+$/.test(x)).map(Number).slice(0, 12);
   let input;
   try {
     input = isLocal ? safeResolve(req.query.src || '') : resolveRemoteSrc(req.query.src);
@@ -1074,7 +1188,7 @@ app.get('/api/session/start', async (req, res) => {
   res.on('close', () => { if (!res.writableEnded) session.cancelled = true; });
 
   if (lowres) transcode = true;
-  const base = { input, isRemote: !isLocal, live, transcode, dir, lowres };
+  const base = { input, isRemote: !isLocal, live, transcode, dir, lowres, start, audio, subs };
   const resetDir = () => {
     try { session.proc.kill('SIGKILL'); } catch {}
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1103,7 +1217,8 @@ app.get('/api/session/start', async (req, res) => {
     return res.status(500).json({ error: 'Akış dönüştürülemedi (kaynak yanıt vermedi veya zaman aşımı)' });
   }
   session.lastAccess = Date.now();
-  res.json({ id, playlist: `/api/session/${id}/index.m3u8`, transcoded: transcode });
+  res.json({ id, playlist: `/api/session/${id}/index.m3u8`, transcoded: transcode, start: live ? 0 : start,
+    subs: live ? [] : subs.map(n => ({ n, url: `/api/session/${id}/sub_${n}.vtt` })) });
 });
 
 app.get('/api/session/:id/:file', (req, res) => {
@@ -1111,8 +1226,17 @@ app.get('/api/session/:id/:file', (req, res) => {
   if (!s) return res.status(404).send('Bulunamadı');
   s.lastAccess = Date.now();
   const filePath = path.join(s.dir, path.basename(req.params.file));
-  if (!fs.existsSync(filePath)) return res.status(404).send('Segment bulunamadı');
+  if (!fs.existsSync(filePath)) {
+    // Altyazı henüz yazılmadıysa boş WebVTT ver
+    if (/\.vtt$/.test(filePath)) { res.setHeader('Content-Type', 'text/vtt'); res.setHeader('Cache-Control', 'no-store'); return res.send('WEBVTT\n\n'); }
+    return res.status(404).send('Segment bulunamadı');
+  }
   res.setHeader('Cache-Control', 'no-store');
+  if (!s.live && /\.m3u8$/.test(filePath)) {
+    const pl = fs.readFileSync(filePath, 'utf-8');
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    return res.send(pl.includes('#EXT-X-START') ? pl : pl.replace('#EXTM3U', '#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES'));
+  }
   res.sendFile(filePath);
 });
 
@@ -1144,6 +1268,114 @@ app.post('/api/state/transcode-key', (req, res) => {
   res.json({ ok: true });
 });
 
-app.listen(PORT, () => {
+// ---- Jellyfin: aynı adres üzerinden (player.dedplay.nl/web/...) ----
+// Jellyfin başka bir adresten iframe ile açılınca tarayıcı (özellikle iPhone/Safari ve Tesla)
+// girişi saklamıyordu. Aynı adresten açılınca giriş normal site gibi kalır; ayrıca hesap bir kere
+// sunucuya kaydedilir ve her cihazda otomatik giriş yapılır.
+function jfConfigured() { return !!(state.jellyfin && state.jellyfin.username); }
+function jfAuthHeader(deviceId, device, token) {
+  const clean = v => String(v || '').replace(/["\r\n]/g, '').slice(0, 120);
+  return `MediaBrowser Client="Jellyfin Web", Device="${clean(device) || 'Tesla Player'}", DeviceId="${clean(deviceId) || 'tesla-player'}", Version="10.10.0"` +
+    (token ? `, Token="${clean(token)}"` : '');
+}
+function jfRequest(method, p, headers, body) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(JF_UPSTREAM + p);
+    const mod = u.protocol === 'https:' ? https : http;
+    const data = body ? Buffer.from(JSON.stringify(body)) : null;
+    const r = mod.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method,
+      headers: { ...(headers || {}), ...(data ? { 'Content-Type': 'application/json', 'Content-Length': data.length } : {}) } }, resp => {
+      let out = '';
+      resp.setEncoding('utf8');
+      resp.on('data', c => { out += c; });
+      resp.on('end', () => { let j = null; try { j = JSON.parse(out); } catch {} resolve({ status: resp.statusCode, json: j }); });
+    });
+    r.setTimeout(15000, () => r.destroy(new Error('zaman aşımı')));
+    r.on('error', reject);
+    if (data) r.write(data);
+    r.end();
+  });
+}
+app.get('/api/jellyfin/status', (req, res) => {
+  res.json({ proxy: JF_PROXY, configured: jfConfigured(), username: jfConfigured() ? state.jellyfin.username : '' });
+});
+// Hesabı kaydet (önce Jellyfin'de dener; yanlışsa kaydetmez)
+app.post('/api/jellyfin/account', async (req, res) => {
+  const b = req.body || {};
+  if (b.remove) { delete state.jellyfin; saveState(state); return res.json({ ok: true }); }
+  const username = String(b.username || '').trim();
+  const password = String(b.password || '');
+  if (!JF_PROXY) return res.status(400).json({ error: 'JELLYFIN_URL ayarlı değil' });
+  if (!username) return res.status(400).json({ error: 'Kullanıcı adı boş' });
+  try {
+    const r = await jfRequest('POST', '/Users/AuthenticateByName', { 'X-Emby-Authorization': jfAuthHeader('tesla-player-check', 'Tesla Player') }, { Username: username, Pw: password });
+    if (r.status !== 200 || !r.json || !r.json.AccessToken) return res.status(401).json({ error: 'Kullanıcı adı veya şifre yanlış' });
+    // Deneme oturumunu kapat (cihaz listesinde fazladan kayıt kalmasın)
+    jfRequest('POST', '/Sessions/Logout', { 'X-Emby-Authorization': jfAuthHeader('tesla-player-check', 'Tesla Player', r.json.AccessToken) }).catch(() => {});
+    state.jellyfin = { username, password };
+    saveState(state);
+    res.json({ ok: true });
+  } catch (e) { res.status(502).json({ error: 'Jellyfin\'e ulaşılamadı: ' + e.message }); }
+});
+// Bu cihaz için giriş yap: Jellyfin'in kendi cihaz kimliğiyle token al (şifre tarayıcıya gitmez)
+app.post('/api/jellyfin/autologin', async (req, res) => {
+  if (!JF_PROXY || !jfConfigured()) return res.status(400).json({ error: 'Kayıtlı Jellyfin hesabı yok' });
+  const b = req.body || {};
+  try {
+    const r = await jfRequest('POST', '/Users/AuthenticateByName', { 'X-Emby-Authorization': jfAuthHeader(b.deviceId, b.device) },
+      { Username: state.jellyfin.username, Pw: state.jellyfin.password });
+    if (r.status !== 200 || !r.json || !r.json.AccessToken) return res.status(401).json({ error: 'Kayıtlı Jellyfin şifresi artık geçmiyor' });
+    res.json({ ok: true, accessToken: r.json.AccessToken, serverId: r.json.ServerId, userId: r.json.User && r.json.User.Id });
+  } catch (e) { res.status(502).json({ error: 'Jellyfin\'e ulaşılamadı: ' + e.message }); }
+});
+
+// Kalan bütün istekler (/web, /Users, /Items, /socket ...) Jellyfin'e aktarılır
+function jfTarget(url) { return new URL(JF_UPSTREAM + url); }
+app.use((req, res, next) => {
+  if (!JF_PROXY || req.path.startsWith('/api/')) return next();
+  const u = jfTarget(req.originalUrl);
+  const mod = u.protocol === 'https:' ? https : http;
+  const headers = { ...req.headers, host: u.host };
+  Object.keys(headers).forEach(k => { if (k.startsWith('cf-') || k === 'cdn-loop') delete headers[k]; });
+  const up = mod.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: req.method, headers }, upRes => {
+    const h = { ...upRes.headers };
+    if (h.location) {
+      try {
+        const loc = new URL(h.location, JF_UPSTREAM + '/');
+        if (loc.host === u.host || (JF_PUBLIC_HOST && loc.host === JF_PUBLIC_HOST)) h.location = loc.pathname + loc.search;
+      } catch {}
+    }
+    delete h['x-frame-options'];
+    res.writeHead(upRes.statusCode, h);
+    upRes.pipe(res);
+  });
+  up.on('error', e => { if (!res.headersSent) res.status(502).send('Jellyfin\'e ulaşılamadı: ' + e.message); else res.end(); });
+  res.on('close', () => { if (!res.writableFinished) up.destroy(); });
+  req.pipe(up);
+});
+
+const server = app.listen(PORT, () => {
   console.log(`Tesla Player ${PORT} portunda çalışıyor, medya kökü: ${MEDIA_ROOT}`);
+  if (JF_PROXY) console.log(`Jellyfin bu adres üzerinden açılıyor (kaynak: ${JF_UPSTREAM})`);
+});
+// Jellyfin canlı bağlantısı (websocket) aktarımı
+server.on('upgrade', (req, socket, head) => {
+  if (!JF_PROXY || req.url.startsWith('/api/')) return socket.destroy();
+  const u = jfTarget(req.url);
+  const mod = u.protocol === 'https:' ? https : http;
+  const up = mod.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, method: 'GET', headers: { ...req.headers, host: u.host } });
+  up.on('upgrade', (upRes, upSocket, upHead) => {
+    let raw = 'HTTP/1.1 101 Switching Protocols\r\n';
+    for (const [k, v] of Object.entries(upRes.headers)) (Array.isArray(v) ? v : [v]).forEach(x => { raw += `${k}: ${x}\r\n`; });
+    socket.write(raw + '\r\n');
+    if (upHead && upHead.length) socket.write(upHead);
+    if (head && head.length) upSocket.write(head);
+    upSocket.pipe(socket).pipe(upSocket);
+    const kill = () => { socket.destroy(); upSocket.destroy(); };
+    socket.on('error', kill); upSocket.on('error', kill);
+    socket.on('close', kill); upSocket.on('close', kill);
+  });
+  up.on('response', r => { socket.end(`HTTP/1.1 ${r.statusCode} Error\r\n\r\n`); });
+  up.on('error', () => socket.destroy());
+  up.end();
 });

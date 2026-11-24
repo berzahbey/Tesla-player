@@ -8,6 +8,9 @@ services:
     environment:
       - MEDIA_ROOT=/media
       - JELLYFIN_URL=https://j.dedplay.nl
+      # Jellyfin'e konteynerden ev ağı üzerinden ulaşılan adres (video internete çıkıp dönmesin).
+      # Yazılmazsa JELLYFIN_URL kullanılır. Örnek: http://192.168.1.10:8096
+      # - JELLYFIN_INTERNAL_URL=http://SUNUCU_IP:8096
       - XTREAM_SERVER=http://SUNUCU_ADRESI:PORT
       - XTREAM_USERNAME=kullanici_adiniz
       - XTREAM_PASSWORD=sifreniz

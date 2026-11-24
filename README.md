@@ -29,3 +29,17 @@ docker compose up -d --build
 - Tarayıcının çözemediği 4K/HEVC kanallarda (ses var, görüntü siyah) uygulama bunu otomatik algılar ve kanalı sunucuda ffmpeg ile **H.264 1080p**'ye dönüştürür ("Uyumluluk modu"). Böyle bir kanal hatırlanır, sonraki açılışta doğrudan dönüştürülür.
 - Intel GPU'lu sunucularda (`/dev/dri`) dönüştürme donanımla (VAAPI) yapılır; yoksa yazılımla (libx264) yapılır. Kapatmak için `DISABLE_VAAPI=1`.
 - İsteğe bağlı: `TRANSCODE_MAX_HEIGHT` (varsayılan `1080`).
+
+## Film oynatıcı (M3U ve Xtream filmleri / dizileri)
+
+- Filmler için kendi kontrolleri: durdur/oynat, 10 sn geri / 30 sn ileri, filmin tamamında sarma çubuğu, kaldığı yerden devam (her film ayrı, sunucuda saklanır).
+- **Ses dili** ve **altyazı** seçimi (dosyanın içindeki diller). Türkçe altyazı varsa kendiliğinden açılır. Bilgisayardan/telefondan `.srt`/`.vtt` altyazı yüklenebilir, altyazı ±0,5 sn kaydırılabilir.
+- mp4/H.264 dosyalar doğrudan oynar; mkv/avi vb. sunucuda ffmpeg ile akışa çevrilir (çoğunlukla kopyalayarak, işlemciyi yormadan).
+- iPhone: ekran kilitlenince / uygulamadan çıkınca ses devam eder (kilit ekranından oynat/durdur ve sarma). Safari'den açıldığında en iyi çalışır; ana ekrana eklenmiş uygulamada iOS arka plan sesini kısıtlayabiliyor.
+
+## Jellyfin: bir kere giriş
+
+- Jellyfin artık uygulamanın kendi adresi üzerinden açılır (`/web/...`), böylece tarayıcı girişi unutmaz.
+- Jellyfin sekmesinde kullanıcı adı/şifre bir kere kaydedilir (sunucuda saklanır, tarayıcıya gönderilmez); Tesla, iPhone ve Mac'te otomatik giriş yapılır. Sol alttaki ⚙ ile değiştirilir/silinir.
+- Not: Uygulama adresine erişen herkes bu Jellyfin hesabıyla girmiş olur; yönetici olmayan bir Jellyfin kullanıcısı kullanmanız önerilir.
+- Eski davranış (Jellyfin'i doğrudan kendi adresinden iframe ile açmak) için `JELLYFIN_PROXY=0`.

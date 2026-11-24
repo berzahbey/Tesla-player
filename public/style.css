@@ -313,3 +313,101 @@ body:not(.platform-mobile) video::-webkit-media-controls-fullscreen-button { dis
 body.platform-tesla .list-picker select { padding: 14px; font-size: 18px; }
 body.platform-tesla .side-panel .list-picker button { padding: 0 18px; font-size: 18px; }
 body.fs-on #iptv-side-panel .list-picker { display: none; }
+
+/* ===== Film oynatıcı kontrolleri ===== */
+.mv-controls { display: none; }
+.player-panel.movie-mode .mv-controls {
+  display: block; position: absolute; left: 0; right: 0; bottom: 0; z-index: 12;
+  padding: 28px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-left: calc(12px + env(safe-area-inset-left, 0px)); padding-right: calc(12px + env(safe-area-inset-right, 0px));
+  background: linear-gradient(transparent, rgba(0,0,0,0.85) 45%);
+  color: #fff; opacity: 0; pointer-events: none; transition: opacity 0.25s ease;
+}
+.player-panel.movie-mode .mv-controls.show { opacity: 1; pointer-events: auto; }
+.mv-title { font-size: 14px; color: #ddd; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mv-seekrow { display: flex; align-items: center; gap: 10px; font-size: 13px; font-variant-numeric: tabular-nums; }
+#mv-seek { flex: 1; min-width: 0; accent-color: #2b7cff; height: 28px; margin: 0; }
+.mv-row { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.mv-row button {
+  background: rgba(255,255,255,0.14); color: #fff; border: none; border-radius: 8px;
+  padding: 8px 12px; font-size: 15px; min-width: 44px; min-height: 40px; cursor: pointer; white-space: nowrap;
+}
+.mv-row button.on { background: #2b7cff; }
+.mv-row .mv-big { font-size: 20px; min-width: 54px; }
+.mv-spacer { flex: 1; }
+.mv-menu {
+  display: none; position: absolute; right: 12px; bottom: calc(100% - 20px); max-height: 60vh; overflow-y: auto;
+  background: rgba(28,28,30,0.97); border: 1px solid #444; border-radius: 12px; padding: 6px; min-width: 240px; max-width: calc(100vw - 24px);
+}
+.mv-menu.open { display: block; }
+.mv-opt { display: block; width: 100%; text-align: left; background: none; color: #fff; border: none; padding: 10px 12px; font-size: 15px; border-radius: 8px; cursor: pointer; }
+.mv-opt:hover { background: #ffffff14; }
+.mv-opt.on { color: #4cd964; }
+.mv-opt:disabled { color: #777; cursor: default; }
+.mv-delay { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border-top: 1px solid #333; margin-top: 4px; }
+.mv-delay .mv-opt { width: auto; text-align: center; background: #ffffff14; padding: 8px 12px; }
+.mv-delay span { flex: 1; text-align: center; font-size: 14px; color: #ccc; }
+video::cue { background: rgba(0,0,0,0.6); color: #fff; font-size: 1.05em; }
+body.platform-tesla .mv-row button { min-height: 54px; min-width: 60px; font-size: 19px; padding: 10px 16px; }
+body.platform-tesla .mv-seekrow { font-size: 17px; }
+body.platform-tesla #mv-seek { height: 44px; }
+body.platform-tesla .mv-opt { font-size: 19px; padding: 14px 16px; }
+body.platform-tesla .mv-title { font-size: 18px; }
+body.platform-tesla video::cue { font-size: 1.35em; }
+@media (max-width: 520px) {
+  .mv-lbl { display: none; }
+  .mv-row button { padding: 8px 10px; min-width: 40px; }
+}
+
+/* ===== Jellyfin hesabı ===== */
+.jf-gear {
+  position: absolute; left: 10px; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); z-index: 5;
+  width: 34px; height: 34px; border-radius: 50%; border: 1px solid #555; background: rgba(0,0,0,0.5); color: #ccc;
+  font-size: 16px; opacity: 0.6; cursor: pointer;
+}
+.jf-gear:hover { opacity: 1; }
+.jf-setup { position: absolute; inset: 0; z-index: 20; background: rgba(0,0,0,0.7); align-items: center; justify-content: center; padding: 16px; }
+.jf-box { background: #1a1a1a; border: 1px solid #333; border-radius: 14px; padding: 20px; width: 100%; max-width: 360px; }
+.jf-box h3 { margin: 0 0 6px; }
+.jf-box p { color: #aaa; font-size: 14px; margin: 0 0 14px; }
+.jf-box input { width: 100%; padding: 12px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #444; background: #0d0d0d; color: #eee; font-size: 16px; }
+.jf-box button { width: 100%; padding: 12px; margin-bottom: 8px; border: none; border-radius: 8px; background: #2b7cff; color: #fff; font-weight: 600; font-size: 15px; cursor: pointer; }
+.jf-box .jf-secondary { background: #2a2a2a; color: #ccc; font-weight: 400; }
+
+/* ===== iPhone dik ekran: video üstte, liste altında (çekmece yerine) ===== */
+@media (orientation: portrait) and (max-width: 600px) {
+  body.platform-mobile:not(.fs-on) .tab-btn { padding: 10px 4px; font-size: 14px; }
+  body.platform-mobile:not(.fs-on) #iptv,
+  body.platform-mobile:not(.fs-on) .mp-layout { flex-direction: column; }
+  body.platform-mobile:not(.fs-on) #iptv-player-panel,
+  body.platform-mobile:not(.fs-on) #mp-player-panel {
+    order: 1; flex: none; width: 100%; aspect-ratio: 16 / 9; max-height: 45vh;
+  }
+  body.platform-mobile:not(.fs-on) #iptv-side-panel,
+  body.platform-mobile:not(.fs-on) #mp-side-panel {
+    order: 2; position: static; transform: none; width: 100%; max-width: none; flex: 1; min-height: 0;
+    box-shadow: none; border-right: none; border-top: 1px solid #333; padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  body.platform-mobile:not(.fs-on) .drawer-toggle { display: none !important; }
+  /* Sıkı liste */
+  body.platform-mobile:not(.fs-on) .mode-switch,
+  body.platform-mobile:not(.fs-on) .xtream-section-switch { margin-bottom: 8px; gap: 6px; }
+  body.platform-mobile:not(.fs-on) .mode-btn,
+  body.platform-mobile:not(.fs-on) .xt-sec-btn { padding: 7px 4px; font-size: 13px; }
+  body.platform-mobile:not(.fs-on) .list-picker { margin-bottom: 8px; }
+  body.platform-mobile:not(.fs-on) .side-panel .list-picker select { padding: 8px; font-size: 15px; }
+  body.platform-mobile:not(.fs-on) .side-panel .list-picker button { padding: 0 10px; min-width: 38px; }
+  body.platform-mobile:not(.fs-on) .side-panel input,
+  body.platform-mobile:not(.fs-on) .side-panel button { padding: 9px; margin-bottom: 8px; font-size: 15px; }
+  body.platform-mobile:not(.fs-on) .channel-item,
+  body.platform-mobile:not(.fs-on) .xt-item,
+  body.platform-mobile:not(.fs-on) .mp-item { padding: 9px 10px; margin-bottom: 4px; font-size: 15px; line-height: 1.25; }
+  body.platform-mobile:not(.fs-on) .xt-item img { width: 24px; height: 24px; }
+  body.platform-mobile:not(.fs-on) .fullscreen-btn { top: 8px; right: 8px; width: 36px; height: 36px; font-size: 16px; }
+  body.platform-mobile:not(.fs-on) .mv-title { display: none; }
+  body.platform-mobile:not(.fs-on) .player-panel.movie-mode .mv-controls { padding-top: 16px; }
+  body.platform-mobile:not(.fs-on) .mv-row button { min-height: 34px; padding: 5px 8px; font-size: 14px; }
+  body.platform-mobile:not(.fs-on) .mv-row .mv-big { font-size: 17px; min-width: 44px; }
+  /* Menü videonun altına (listenin üstüne) açılsın, küçük videoda kesilmesin */
+  body.platform-mobile:not(.fs-on) .mv-menu { max-height: 45vh; bottom: auto; top: calc(100% + 4px); }
+}
