@@ -441,3 +441,19 @@ body.platform-tesla .yt-ch { font-size: 14px; }
 .yt-account .yt-secondary { background: #2a2a2a; color: #ccc; font-weight: 400; }
 .yt-listicon { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 28px; color: #777; }
 body.platform-tesla .yt-chip { padding: 12px 18px; font-size: 17px; }
+
+/* ===== TV (kumanda): odaktaki öğe belirgin ===== */
+body.platform-tv *:focus { outline: none; }
+body.platform-tv button:focus, body.platform-tv input:focus, body.platform-tv select:focus,
+body.platform-tv .channel-item:focus, body.platform-tv .xt-item:focus, body.platform-tv .yt-item:focus, body.platform-tv .mp-item:focus {
+  outline: 3px solid #fff; outline-offset: -3px; background-color: #2b7cff99 !important; color: #fff;
+}
+body.platform-tv .player-panel:focus, body.platform-tv .mp-player:focus { box-shadow: inset 0 0 0 4px #2b7cff; }
+body.platform-tv.fs-on .player-panel:focus, body.platform-tv.fs-on .mp-player:focus { box-shadow: none; }
+body.platform-tv .tab-btn:focus { background: #2b7cff; }
+body.platform-tv .tab-btn.tv-settings { flex: 0 0 72px; font-size: 22px; }
+body.platform-tv .fullscreen-btn { display: none; }
+body.platform-tv .drawer-toggle { display: none !important; }
+body.platform-tv .mv-row button:focus { outline: 3px solid #fff; background: #2b7cff; }
+body.platform-tv #mv-seek:focus { outline: 3px solid #fff; border-radius: 6px; }
+body.platform-tv ::-webkit-scrollbar { width: 0; height: 0; }

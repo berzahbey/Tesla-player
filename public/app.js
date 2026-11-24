@@ -6,8 +6,10 @@ function supportsNativeHls() {
 function detectPlatform() {
   const ua = navigator.userAgent || "";
   let platform;
-  if (/Tesla|QtCarBrowser/i.test(ua)) {
+  if (/Tesla|QtCarBrowser/i.test(ua) && !/TeslaPlayerTV/.test(ua)) {
     platform = "tesla";
+  } else if (/TeslaPlayerTV/.test(ua) || (/Android/i.test(ua) && /\bTV\b|AFT|BRAVIA|MiBOX|MIBOX|Google ?TV|SMART-TV|AndroidTV|Chromecast/i.test(ua))) {
+    platform = "tv";
   } else if (/iPhone|iPad|iPod|Android/i.test(ua)) {
     platform = "mobile";
   } else {
@@ -1423,6 +1425,7 @@ function setupAutoHideList(panelId, playerId, videoId, tabId, onShow) {
 
   const hide = () => {
     if (stackedLayout()) return; // iPhone dik: liste videonun altında, hep açık
+    if (currentPlatform === 'tv') return; // TV: liste kumandayla yönetilir
     if (isDrawer()) panel.classList.remove('open');
     else panel.classList.add('collapsed');
   };
@@ -1601,7 +1604,7 @@ function setMovieMode(on) {
   movie.active = on;
   const c = mvCtx();
   c.panel.classList.toggle('movie-mode', on);
-  c.video.controls = !on;
+  c.video.controls = !on && currentPlatform !== 'tv';
   if (on && mvControls.parentElement !== c.panel) c.panel.appendChild(mvControls);
   if (!on) {
     hideMovieMenu();
@@ -2388,6 +2391,199 @@ function initYoutube() {
   fetch('/api/yt/account').then(r => r.json()).then(a => { ytAccount = !!a.connected; renderYtFeeds(); }).catch(() => renderYtFeeds());
   const last = lsGet('tp-yt-q', '');
   if (last) { ytQ.value = last; ytSearch(last); } else showYtHome();
+}
+
+// ===================== TV (Mi Box / Google TV): kumanda ile kullanım =====================
+// Yön tuşları: gezinme · OK: seç · Geri: geri / tam ekrandan çık
+// Film: OK = durdur/oynat, ◀ ▶ = 10 sn geri / 30 sn ileri · Canlı TV (tam ekran): ▲ ▼ = önceki/sonraki kanal, OK/◀ = liste
+const isTV = currentPlatform === 'tv';
+const TV_SEL = 'button, input, select, .channel-item, .xt-item, .yt-item, .mp-item, .player-panel, .mp-player';
+let tvWantFs = 0;
+function tvVisible(el) {
+  if (el.disabled) return false;
+  const r = el.getBoundingClientRect();
+  if (r.width < 2 || r.height < 2) return false;
+  if (r.right <= 0 || r.left >= window.innerWidth) return false;
+  if (el.closest('.mv-controls') && !mvControls.classList.contains('show')) return false;
+  if (el.closest('.mv-menu') && !mvMenu.classList.contains('open')) return false;
+  const st = getComputedStyle(el);
+  return st.visibility !== 'hidden' && st.display !== 'none' && st.pointerEvents !== 'none';
+}
+function tvFocus(el) {
+  if (!el) return;
+  if (!/^(BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(el.tagName) && !el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+// Odak kaybolduysa (liste yeniden çizildi) listedeki mantıklı bir öğeye dön
+function tvListTarget(panel) {
+  if (!panel) return null;
+  const items = [...panel.querySelectorAll('.channel-item, .xt-item, .yt-item, .mp-item')].filter(tvVisible);
+  return items.find(i => i.classList.contains('playing')) || items.find(i => !/^⬅/.test(i.textContent.trim())) || items[0] || null;
+}
+let tvLastPanel = null;
+function tvRecover() {
+  const sp = tvLastPanel && document.body.contains(tvLastPanel) && tvVisible(tvLastPanel) ? tvLastPanel : tvSidePanel();
+  const t = tvListTarget(sp);
+  if (t) { tvFocus(t); return true; }
+  return false;
+}
+function tvMove(dir) {
+  const cur = document.activeElement && document.activeElement !== document.body && document.body.contains(document.activeElement) ? document.activeElement : null;
+  const all = [...document.querySelectorAll(TV_SEL)].filter(el => el !== cur && tvVisible(el));
+  if (!cur || !tvVisible(cur)) { if (!tvRecover()) tvFocus(document.querySelector('.tab-btn.active') || all[0]); return; }
+  const a = cur.getBoundingClientRect();
+  const acx = a.left + a.width / 2, acy = a.top + a.height / 2;
+  let best = null, bestScore = Infinity;
+  for (const el of all) {
+    if (el.contains(cur) || cur.contains(el)) continue;
+    const b = el.getBoundingClientRect();
+    const bcx = b.left + b.width / 2, bcy = b.top + b.height / 2;
+    let main, cross, overlap;
+    if (dir === 'down') { if (b.top < a.bottom - 4) continue; main = b.top - a.bottom; cross = Math.abs(bcx - acx); overlap = Math.min(a.right, b.right) - Math.max(a.left, b.left); }
+    else if (dir === 'up') { if (b.bottom > a.top + 4) continue; main = a.top - b.bottom; cross = Math.abs(bcx - acx); overlap = Math.min(a.right, b.right) - Math.max(a.left, b.left); }
+    else if (dir === 'right') { if (b.left < a.right - 4) continue; main = b.left - a.right; cross = Math.abs(bcy - acy); overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top); }
+    else { if (b.right > a.left + 4) continue; main = a.left - b.right; cross = Math.abs(bcy - acy); overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top); }
+    const score = Math.max(0, main) + cross * (overlap > 0 ? 0.2 : 2);
+    if (score < bestScore) { bestScore = score; best = el; }
+  }
+  if (best) tvFocus(best);
+}
+function tvActiveTab() { return document.querySelector('.tab-content.active'); }
+function tvPanel() { const t = tvActiveTab(); return t && t.querySelector('.player-panel, .mp-player'); }
+function tvSidePanel() { const t = tvActiveTab(); return t && t.querySelector('.side-panel, .mp-browser'); }
+function tvMovieHere() { return movie.active && movie.ctx && movie.ctx.panel === tvPanel(); }
+function tvTogglePlay() {
+  const v = tvMovieHere() ? MV() : activeVideo();
+  if (v.paused) v.play().catch(() => {}); else v.pause();
+  if (tvMovieHere()) showMovieControls();
+}
+function tvEnterFs() {
+  document.body.classList.add('pseudo-fs');
+  const sp = tvSidePanel();
+  if (sp) sp.classList.remove('open');
+  tvFocus(tvPanel());
+  if (tvMovieHere()) showMovieControls();
+}
+function tvOpenList() {
+  const sp = tvSidePanel();
+  if (!sp) return;
+  sp.classList.add('open');
+  const name = tvActiveTab().id;
+  if (listCtl[name]) listCtl[name].show();
+  setTimeout(() => tvFocus(sp.querySelector('.playing') || [...sp.querySelectorAll(TV_SEL)].find(tvVisible)), 50);
+}
+// Canlı TV'de kanal değiştir (listede çalan kanalın önceki/sonraki kardeşi)
+function tvZap(step) {
+  const sp = tvSidePanel();
+  const playing = sp && sp.querySelector('.channel-item.playing, .xt-item.playing');
+  if (!playing) return;
+  const sibs = [...playing.parentElement.children].filter(c => c.matches('.channel-item, .xt-item') && !/^⬅|^📁|^★ Favoriler|^📺/.test(c.textContent.trim()));
+  const next = sibs[sibs.indexOf(playing) + step];
+  if (!next) return;
+  tvWantFs = Date.now();
+  next.click();
+  showToast(next.textContent.replace('★', '').trim());
+}
+function tvActivate(el) {
+  if (!el) return;
+  if (el.matches('.player-panel, .mp-player')) { tvEnterFs(); return; }
+  if (el.matches('.channel-item, .xt-item, .yt-item, .mp-item')) tvWantFs = Date.now();
+  tvLastPanel = el.closest('.side-panel, .mp-browser');
+  el.click();
+  // Tıklanan öğe listeyle birlikte silindiyse (yeni liste açıldı) odağı yeni listeye taşı
+  [80, 400, 1200, 2500].forEach(ms => setTimeout(() => {
+    const a = document.activeElement;
+    if (!a || a === document.body || !document.body.contains(a)) tvRecover();
+  }, ms));
+}
+// Geri tuşu. true: uygulama içinde bir şey yapıldı; false: TV uygulaması kapanabilir
+function tvBack() {
+  if (mvMenu.classList.contains('open')) { hideMovieMenu(); tvFocus(document.getElementById('mv-sub-btn')); return true; }
+  const acc = document.getElementById('yt-account-box');
+  if (acc && acc.style.display !== 'none' && tvActiveTab().id === 'youtube') { acc.style.display = 'none'; return true; }
+  const fs = document.body.classList.contains('fs-on');
+  const sp = tvSidePanel();
+  if (fs) {
+    if (sp && sp.classList.contains('open')) { sp.classList.remove('open'); tvFocus(tvPanel()); return true; }
+    if (tvMovieHere() && mvControls.classList.contains('show')) { mvControls.classList.remove('show'); tvFocus(tvPanel()); return true; }
+    document.body.classList.remove('pseudo-fs');
+    setTimeout(() => tvFocus((sp && sp.querySelector('.playing')) || tvPanel()), 50);
+    return true;
+  }
+  const ae = document.activeElement;
+  if (sp && ae && sp.contains(ae)) {
+    const bc = sp.querySelector('#xt-breadcrumb');
+    const backItem = [...sp.querySelectorAll('.channel-item')].find(c => /^⬅/.test(c.textContent.trim()) && tvVisible(c));
+    if (bc && bc.textContent.trim().startsWith('⬅') && tvVisible(bc)) { bc.click(); setTimeout(() => tvMove('down'), 300); return true; }
+    if (backItem) { backItem.click(); setTimeout(() => tvFocus([...sp.querySelectorAll('.channel-item, .yt-item, .mp-item, .xt-item')].find(tvVisible)), 300); return true; }
+  }
+  const tab = document.querySelector('.tab-btn.active');
+  if (ae !== tab) { tvFocus(tab); return true; }
+  return false;
+}
+window.tvBack = tvBack;
+function tvKey(e) {
+  const k = e.key;
+  const ae = document.activeElement;
+  const typing = ae && ((ae.tagName === 'INPUT' && ae.type !== 'range' && ae.type !== 'file') || ae.tagName === 'TEXTAREA');
+  if (k === 'MediaPlayPause' || k === 'MediaPlay' || k === 'MediaPause') { e.preventDefault(); tvTogglePlay(); return; }
+  if (k === 'MediaFastForward' && tvMovieHere()) { e.preventDefault(); movieSeekBy(30); return; }
+  if (k === 'MediaRewind' && tvMovieHere()) { e.preventDefault(); movieSeekBy(-10); return; }
+  if (k === 'ChannelUp' || k === 'ChannelDown' || k === 'MediaTrackNext' || k === 'MediaTrackPrevious') {
+    e.preventDefault(); tvZap(k === 'ChannelDown' || k === 'MediaTrackNext' ? 1 : -1); return;
+  }
+  if ((k === 'GoBack' || k === 'BrowserBack' || (k === 'Backspace' && !typing)) && !window.TPTV) { if (tvBack()) e.preventDefault(); return; }
+  if (typing && (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'Enter')) return;
+  const dir = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' }[k];
+  const isOk = k === 'Enter' || k === ' ';
+  if (!dir && !isOk) return;
+  // Tam ekran video (liste kapalı, odak kontrollerde değil)
+  const fs = document.body.classList.contains('fs-on');
+  const sp = tvSidePanel();
+  const inControls = ae && ae.closest && ae.closest('.mv-controls') && mvControls.classList.contains('show');
+  if (fs && !(sp && sp.classList.contains('open')) && !inControls) {
+    e.preventDefault();
+    if (tvMovieHere()) {
+      if (isOk) { tvTogglePlay(); return; }
+      if (dir === 'left') return movieSeekBy(-10);
+      if (dir === 'right') return movieSeekBy(30);
+      showMovieControls();
+      tvFocus(document.getElementById('mv-play'));
+      return;
+    }
+    if (dir === 'up') return tvZap(-1);
+    if (dir === 'down') return tvZap(1);
+    if (isOk || dir === 'left') return tvOpenList();
+    return;
+  }
+  if (inControls) showMovieControls();
+  if (dir) {
+    e.preventDefault();
+    if (ae && ae.type === 'range' && (dir === 'left' || dir === 'right')) { movieSeekBy(dir === 'left' ? -10 : 30); return; }
+    tvMove(dir);
+    return;
+  }
+  if (isOk && ae && ae !== document.body && !/^(BUTTON|INPUT|SELECT|TEXTAREA|A)$/.test(ae.tagName)) { e.preventDefault(); tvActivate(ae); }
+  else if (isOk && ae && ae.tagName === 'BUTTON') { e.preventDefault(); ae.click(); }
+}
+if (isTV) {
+  document.body.classList.add('platform-tv', 'platform-tesla');
+  allVideos().forEach(v => { v.controls = false; v.addEventListener('playing', () => {
+    // Listeden bir şey seçilip oynamaya başlayınca tam ekrana geç
+    if (tvWantFs && Date.now() - tvWantFs < 20000 && v.closest('.tab-content.active')) { tvWantFs = 0; tvEnterFs(); }
+  }); });
+  document.addEventListener('keydown', tvKey, true);
+  // TV uygulamasının kendi ayarları (sunucu adresi, güncelleme)
+  if (window.TPTV && window.TPTV.openSettings) {
+    const b = document.createElement('button');
+    b.className = 'tab-btn tv-settings';
+    b.textContent = '⚙';
+    b.title = 'TV uygulaması ayarları';
+    b.onclick = () => window.TPTV.openSettings();
+    document.querySelector('.tab-bar').appendChild(b);
+  }
+  setTimeout(() => { if (!document.activeElement || document.activeElement === document.body) tvFocus(document.querySelector('.tab-btn.active')); }, 800);
 }
 
 // ===================== Jellyfin =====================

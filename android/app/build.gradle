@@ -1,0 +1,55 @@
+plugins {
+    id 'com.android.application'
+}
+
+// Sürüm numarası GitHub'daki derleme sırasından gelir (her derleme bir öncekinden büyük)
+def vcode = (System.getenv('TP_VERSION_CODE') ?: '1') as int
+def ks = System.getenv('TP_KEYSTORE')
+
+android {
+    namespace = 'nl.dedplay.teslaplayer'
+    compileSdk = 34
+
+    defaultConfig {
+        applicationId = 'nl.dedplay.teslaplayer'
+        minSdk = 21
+        targetSdk = 34
+        versionCode = vcode
+        versionName = "1.0.${vcode}"
+        // Güncellemeler bu GitHub deposunun "Releases" bölümünden alınır
+        buildConfigField 'String', 'UPDATE_REPO', '"berzahbey/Tesla-player"'
+        buildConfigField 'String', 'DEFAULT_URL', '"https://player.dedplay.nl"'
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    signingConfigs {
+        release {
+            if (ks) {
+                storeFile = file(ks)
+                storePassword = System.getenv('TP_KEYSTORE_PASSWORD')
+                keyAlias = System.getenv('TP_KEY_ALIAS')
+                keyPassword = System.getenv('TP_KEY_PASSWORD')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled = false
+            signingConfig = ks ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_1_8
+        targetCompatibility = JavaVersion.VERSION_1_8
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        abortOnError = false
+    }
+}

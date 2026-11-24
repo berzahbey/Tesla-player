@@ -48,3 +48,12 @@ docker compose up -d --build
 - Videolar sunucuda `yt-dlp` ile alınır (YouTube'un gömülü oynatıcısı kullanılmaz): en fazla 1080p H.264 görüntü + AAC ses, dönüştürmeden.
 - `yt-dlp` her açılışta arka planda güncellenir (kapatmak için `YTDLP_AUTO_UPDATE=0`).
 - Kendi hesabın: YouTube sekmesinde "YouTube hesabımı bağla" → tarayıcıdan dışa aktarılan `cookies.txt` bir kere yüklenir (sunucuda `data/yt-cookies.txt`, sadece sunucu okur). Abonelikler, Sonra izle, Beğenilenler, Listelerim, Kanallarım, Geçmiş, Önerilenler görünür.
+
+## Android TV / Google TV uygulaması (Mi Box, Google TV)
+
+- `android/` klasörü: sunucudaki Tesla Player'ı tam ekran açan TV uygulaması. Kumandayla kullanılır (yön tuşları, OK, Geri; filmde ◀ ▶ sarma, canlı TV'de ▲ ▼ kanal değiştirme).
+- GitHub Actions her `android/` değişikliğinde APK'yı derler ve **Releases** bölümünde `tv-vNN` olarak yayınlar. İlk kurulum bağlantısı (hep aynı):
+  `https://github.com/berzahbey/Tesla-player/releases/latest/download/TeslaPlayerTV.apk`
+- TV'de güncelleme: uygulamada **⚙** (ya da kumandanın Menü tuşu) → **Güncellemeleri denetle** → **Güncelle**. Uygulama açılışta da yeni sürüm varsa sorar.
+- Derleme için GitHub Secrets: `TV_KEYSTORE_B64`, `TV_KEYSTORE_PASSWORD`, `TV_KEY_ALIAS`, `TV_KEY_PASSWORD` (imza anahtarı repoda değil; hep aynı anahtar kullanılmalı, yoksa güncelleme kurulmaz).
+- Web arayüzündeki değişiklikler (sekme, YouTube vb.) için uygulama güncellemesi gerekmez; sunucuyu güncellemek yeter.

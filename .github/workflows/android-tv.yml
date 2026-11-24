@@ -1,0 +1,63 @@
+# Tesla Player TV (Android TV / Google TV) APK'sını derler ve "Releases" bölümünde yayınlar.
+# TV'deki uygulama güncellemeyi buradan (en yeni "tv-vNN" sürümü) alır.
+name: Android TV uygulaması
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - '.github/workflows/android-tv.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: İmza anahtarı
+        env:
+          KS: ${{ secrets.TV_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KS" ]; then
+            echo "::error::GitHub Secrets'ta TV_KEYSTORE_B64 yok. Kurulum: tv-imza klasöründeki talimat."
+            exit 1
+          fi
+          echo "$KS" | base64 -d > "$RUNNER_TEMP/tv.keystore"
+
+      - name: APK derle
+        working-directory: android
+        env:
+          TP_VERSION_CODE: ${{ github.run_number }}
+          TP_KEYSTORE: ${{ runner.temp }}/tv.keystore
+          TP_KEYSTORE_PASSWORD: ${{ secrets.TV_KEYSTORE_PASSWORD }}
+          TP_KEY_ALIAS: ${{ secrets.TV_KEY_ALIAS }}
+          TP_KEY_PASSWORD: ${{ secrets.TV_KEY_PASSWORD }}
+        run: gradle --no-daemon assembleRelease
+
+      - name: Yayınla (Releases)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=${{ github.run_number }}
+          APK="TeslaPlayerTV-1.0.$V.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "$APK"
+          # Sabit adlı kopya: ilk kurulum için hep aynı bağlantı
+          # https://github.com/berzahbey/Tesla-player/releases/latest/download/TeslaPlayerTV.apk
+          cp "$APK" TeslaPlayerTV.apk
+          gh release create "tv-v$V" "$APK" TeslaPlayerTV.apk --latest \
+            --title "Tesla Player TV 1.0.$V" \
+            --notes "Android TV / Google TV uygulaması. TV'de: Ayarlar (⚙) → Güncellemeleri denetle. İlk kurulum için bu APK'yı indirin."
