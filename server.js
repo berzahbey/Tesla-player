@@ -1285,12 +1285,28 @@ async function ytRawFetch(id) {
   const url = `https://www.youtube.com/watch?v=${id}`;
   const args = ['-J', '--ignore-no-formats-error', url];
   const usable = j => (j.formats || []).some(f => f.url && f.vcodec && f.vcodec !== 'none');
+  const t0 = Date.now();
+  // Hızlı yol: visionos istemcisi — JavaScript bulmacası ve ek anahtar (PO token) gerektirmiyor.
+  // H.264 görüntü çıkmazsa normal (yavaş) yola geç.
+  if (process.env.YT_FAST !== '0') {
+    try {
+      const jf = JSON.parse(await runYtdlp(['-J', '--ignore-no-formats-error', '--extractor-args', 'youtube:player_client=visionos', url], 25000, { noCookies: true }));
+      const avc = (jf.formats || []).some(f => f.url && /^avc1/.test(f.vcodec || '') && !/m3u8/.test(f.protocol || ''));
+      if (avc && !jf.is_live) {
+        console.log(`yt-dlp [${id}] hızlı yol: ${((Date.now() - t0) / 1000).toFixed(1)}sn`);
+        ytCache.set(id, { t: Date.now(), j: jf });
+        if (ytCache.size > 100) ytCache.delete(ytCache.keys().next().value);
+        return jf;
+      }
+    } catch {}
+  }
   let j = null, firstErr = null;
   try { j = JSON.parse(await runYtdlp(args, 45000, { noCookies: true })); } catch (e) { firstErr = e; }
   if ((!j || !usable(j)) && ytHasAccount()) {
     try { const j2 = JSON.parse(await runYtdlp(args)); if (usable(j2) || !j) j = j2; } catch (e) { if (!j) throw firstErr || e; }
   }
   if (!j) throw firstErr || new Error('Video bilgisi alınamadı');
+  console.log(`yt-dlp [${id}] normal yol: ${((Date.now() - t0) / 1000).toFixed(1)}sn`);
   ytCache.set(id, { t: Date.now(), j });
   if (ytCache.size > 100) ytCache.delete(ytCache.keys().next().value);
   return j;
@@ -1311,11 +1327,12 @@ async function ytResolve(id, maxH) {
     .sort((a, b) => (b.height || 0) - (a.height || 0) || (b.tbr || 0) - (a.tbr || 0));
   const auds = fm.filter(f => isHttp(f) && /^mp4a/.test(f.acodec || '') && (!f.vcodec || f.vcodec === 'none'))
     .sort((a, b) => ((/original|default/i.test(b.format_note || '') ? 1 : 0) - (/original|default/i.test(a.format_note || '') ? 1 : 0)) || (b.abr || 0) - (a.abr || 0));
-  if (vids[0] && auds[0]) return { live: false, v: vids[0], a: auds[0], ua, h264: true };
+  const fua = f => (f && f.http_headers && f.http_headers['User-Agent']) || ua;
+  if (vids[0] && auds[0]) return { live: false, v: vids[0], a: auds[0], ua: fua(vids[0]), h264: true };
   // Yedek: görüntü+ses birlikte olan biçim (genelde 360p)
   const both = fm.filter(f => isHttp(f) && f.vcodec && f.vcodec !== 'none' && f.acodec && f.acodec !== 'none')
     .sort((a, b) => (b.height || 0) - (a.height || 0))[0];
-  if (both) return { live: false, v: both, a: null, ua, h264: /^avc1/.test(both.vcodec || '') };
+  if (both) return { live: false, v: both, a: null, ua: fua(both), h264: /^avc1/.test(both.vcodec || '') };
   throw new Error('Uygun biçim bulunamadı');
 }
 
@@ -1432,6 +1449,7 @@ app.get('/api/media/info', async (req, res) => {
 
 // GET /api/session/start?src=...&local=0|1&live=0|1&mode=auto|transcode|copy
 app.get('/api/session/start', async (req, res) => {
+  const reqStart = Date.now();
   const isLocal = req.query.local === '1';
   const mode = ['auto', 'transcode', 'copy'].includes(req.query.mode) ? req.query.mode : 'copy';
   const lowres = req.query.q === '720';
@@ -1471,7 +1489,7 @@ app.get('/api/session/start', async (req, res) => {
   const id = crypto.randomUUID();
   const dir = path.join(HLS_TMP_ROOT, id);
   fs.mkdirSync(dir, { recursive: true });
-  const session = { id, dir, live, lastAccess: Date.now(), idleLimit: live ? 45000 : 20 * 60000 };
+  const session = { id, dir, live, started: reqStart, lastAccess: Date.now(), idleLimit: live ? 45000 : 20 * 60000 };
   sessions.set(id, session);
   res.on('close', () => { if (!res.writableEnded) session.cancelled = true; });
 
@@ -1505,6 +1523,7 @@ app.get('/api/session/start', async (req, res) => {
     return res.status(500).json({ error: 'Akış dönüştürülemedi (kaynak yanıt vermedi veya zaman aşımı)' });
   }
   session.lastAccess = Date.now();
+  if (req.query.yt) console.log(`YouTube [${req.query.yt}] akış hazır: ${((Date.now() - session.started) / 1000).toFixed(1)}sn`);
   res.json({ id, playlist: `/api/session/${id}/index.m3u8`, transcoded: transcode, start: live ? 0 : start,
     subs: live ? [] : subs.map(n => ({ n, url: `/api/session/${id}/sub_${n}.vtt` })) });
 });
