@@ -464,3 +464,10 @@ body.platform-tv ::-webkit-scrollbar { width: 0; height: 0; }
 .tv-popup-opt { display: block; width: 100%; text-align: left; padding: 14px 18px; margin: 4px 0; border: none; border-radius: 10px; background: #2a2a2a; color: #fff; font-size: 20px; }
 .tv-popup-opt.on { color: #4cd964; }
 .yt-mic { padding: 0 14px; border: none; border-radius: 8px; background: #e00; color: #fff; font-size: 20px; cursor: pointer; }
+
+/* TV: tam ekranda açılan listede de M3U/Xtream seçimi, liste/hesap seçimi ve bölümler görünsün */
+body.platform-tv.fs-on #iptv-side-panel .mode-switch,
+body.platform-tv.fs-on #iptv-side-panel .xtream-section-switch,
+body.platform-tv.fs-on #iptv-side-panel .list-picker,
+body.platform-tv.fs-on #iptv-side-panel #m3u-mode > .list-picker { display: flex !important; }
+body.platform-tv.fs-on #iptv-side-panel #xt-breadcrumb { display: block !important; }

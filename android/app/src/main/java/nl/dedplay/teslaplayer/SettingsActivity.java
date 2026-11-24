@@ -96,7 +96,7 @@ public class SettingsActivity extends Activity {
             if (confirm != null) {
                 try {
                     startActivity(confirm);
-                    setStatus("Onay ekranında 'Yükle'yi seçin.");
+                    setStatus("Onay ekranında 'Yükle'yi seçin. Uygulama kapanıp yeni sürümle açılacak.");
                 } catch (Exception e) {
                     setStatus("Kurulum ekranı açılamadı: " + e.getMessage());
                 }
@@ -164,7 +164,7 @@ public class SettingsActivity extends Activity {
         new Thread(() -> {
             try {
                 Updater.install(this, r, pc -> ui.post(() -> setStatus("İndiriliyor… %" + pc)));
-                ui.post(() -> setStatus("Kuruluyor…"));
+                ui.post(() -> setStatus("Kuruluyor… Uygulama birkaç saniye kapanıp yeni sürümle kendiliğinden açılacak."));
             } catch (final Exception e) {
                 ui.post(() -> {
                     setStatus("Güncelleme yapılamadı: " + e.getMessage());

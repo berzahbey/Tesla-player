@@ -39,6 +39,14 @@
             </intent-filter>
         </activity>
 
+        <receiver
+            android:name=".UpdatedReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
         <activity
             android:name=".SettingsActivity"
             android:exported="false"
