@@ -1846,7 +1846,6 @@ function updateMovieUi() {
   if (!mvDragging && dur) mvSeek.value = String(Math.round(Math.min(1, now / dur) * 1000));
   document.getElementById('mv-play').textContent = iptvVideo.paused && movie.pendingAt == null ? '▶' : '⏸';
   const info = movie.info;
-  document.getElementById('mv-audio-btn').style.display = info && info.audio.length < 2 ? 'none' : '';
   document.getElementById('mv-sub-btn').classList.toggle('on', !!movie.sub);
 }
 function showMovieControls() {
@@ -1891,7 +1890,10 @@ async function openMovieMenu(kind, keep) {
         });
       }
     } else if (!info || !info.audio.length) add('Ses bilgisi alınamadı', false, null);
-    else info.audio.forEach(a => add(audioLabel(a), a.n === movie.audio, () => { hideMovieMenu(); selectAudio(a.n); }));
+    else {
+      info.audio.forEach(a => add(audioLabel(a), a.n === movie.audio, () => { hideMovieMenu(); selectAudio(a.n); }));
+      if (info.audio.length === 1) add('Bu filmde tek ses dili var', false, null);
+    }
   } else {
     add('Kapalı', !movie.sub, () => { hideMovieMenu(); selectSub(null); });
     (info ? info.subs : []).forEach(x => add(subLabel(x) + (x.text ? '' : ' (resim altyazı, desteklenmiyor)'),
