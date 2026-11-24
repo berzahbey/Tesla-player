@@ -1578,9 +1578,13 @@ const ytCtx = {
     ytVideoEl.removeAttribute('src'); ytVideoEl.load();
   },
   setSession(id) { ytSessionId = id; },
-  attach(url) {
+  attach(url, opts = {}) {
     if (supportsNativeHls() && isAppleNative()) ytVideoEl.src = url;
-    else if (Hls.isSupported()) { ytHls = new Hls(); ytHls.loadSource(url); ytHls.attachMedia(ytVideoEl); }
+    else if (Hls.isSupported()) {
+      ytHls = new Hls({ startPosition: opts.startAt || -1 });
+      if (opts.onFatal) ytHls.on(Hls.Events.ERROR, (_, d) => { if (d.fatal) opts.onFatal(d); });
+      ytHls.loadSource(url); ytHls.attachMedia(ytVideoEl);
+    }
     else ytVideoEl.src = url;
     ytVideoEl.play().catch(() => {});
   }
@@ -1674,8 +1678,38 @@ async function playMovie(url, label, opts = {}) {
   if (at) showToast('Kaldığın yerden: ' + fmtTime(at));
   updateMovieUi();
   showMovieControls();
+  if (opts.yt) {
+    // YouTube: varsa kendi HLS parçalarıyla (ffmpeg'siz, anında başlar ve sarar); yoksa sunucu akışı
+    const token = ctx.token();
+    await ensureMovieInfo();
+    if (token !== ctx.token() || movie.yt !== opts.yt) return;
+    if (movie.info && movie.info.hls && !movie.info.live) return movieYtHls(at);
+    return movieSession(at);
+  }
   if (opts.server || SERVER_EXT.test(movieExt(url))) await movieSession(at);
   else movieDirect(at);
+}
+
+function movieYtHls(at) {
+  const ctx = mvCtx();
+  const my = ++movie.token;
+  movie.mode = 'direct'; movie.offset = 0; movie.pendingAt = null;
+  ctx.release();
+  const url = movie.info.hls + (lowResDevice ? '?q=720' : '');
+  const fallback = why => {
+    if (my !== movie.token || !movie.active || movie.ctx !== ctx || movie.mode !== 'direct') return;
+    dbg('YouTube HLS açılamadı (' + why + '), sunucu akışına geçiliyor');
+    movieSession(movieNow());
+  };
+  if (at > 0) ctx.video.addEventListener('loadedmetadata', () => { try { if (ctx.video.currentTime < 5) ctx.video.currentTime = at; } catch {} }, { once: true });
+  ctx.attach(url, { startAt: at > 0 ? at : -1, onFatal: d => fallback(d.details || 'hata') });
+  if (!movie.subAuto) {
+    movie.subAuto = true;
+    const trSub = movie.info.subs.find(x => x.text && x.ext && !x.auto && /^(tur|tr)$/i.test(x.lang));
+    if (trSub) selectSub({ kind: 'ext', n: trSub.n });
+  }
+  renderCues();
+  updateMovieUi();
 }
 // Dosya bilgisi: süre, ses dilleri, altyazılar (bir kere)
 async function ensureMovieInfo() {
@@ -2212,7 +2246,7 @@ function ytItem(v, progress) {
   return el;
 }
 async function ytPlay(v) {
-  await playMovie('yt:' + v.id, v.link ? 'YouTube' : v.title, { ctx: ytCtx, yt: v.id, server: true });
+  await playMovie('yt:' + v.id, v.link ? 'YouTube' : v.title, { ctx: ytCtx, yt: v.id });
   // Bağlantıdan açılan videonun başlığını bilgiden al
   if (movie.yt === v.id && movie.info && movie.info.title && v.link) {
     movie.label = movie.info.title;

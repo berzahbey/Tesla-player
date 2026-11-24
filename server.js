@@ -1398,6 +1398,91 @@ async function ytResolve(id, maxH) {
   throw new Error('Uygun biçim bulunamadı');
 }
 
+// ---- YouTube HLS: ffmpeg'siz, YouTube'un kendi parçalarıyla oynatma ----
+// Ana listeyi (master) biz kurarız; parça listeleri ve parçalar sunucu üzerinden aktarılır
+// (Tesla tarayıcısı YouTube sunucularından doğrudan çekemiyor). Başlama ve sarma anında olur.
+function ytHlsPlan(j, maxH) {
+  if (!j || j.is_live) return null;
+  const fm = j.formats || [];
+  const isHls = f => f.url && /m3u8/.test(f.protocol || '');
+  const vids = fm.filter(f => isHls(f) && /^avc1/.test(f.vcodec || '') && (!f.acodec || f.acodec === 'none') && (f.height || 0) <= maxH)
+    .sort((a, b) => (b.height || 0) - (a.height || 0));
+  const auds = fm.filter(f => isHls(f) && (!f.vcodec || f.vcodec === 'none'))
+    .sort((a, b) => ((/default/i.test(b.format_note || '') ? 1 : 0) - (/default/i.test(a.format_note || '') ? 1 : 0)) || (b.tbr || b.abr || 0) - (a.tbr || a.abr || 0));
+  if (!vids.length || !auds.length) return null;
+  // Aynı dilden tek ses (en iyisi)
+  const seen = new Set();
+  const audios = auds.filter(a => { const k = a.language || '?'; if (seen.has(k)) return false; seen.add(k); return true; });
+  return { vids, audios };
+}
+const YT_HOST_OK = h => process.env.YT_HLS_ANY_HOST === '1' || /(^|\.)(googlevideo\.com|youtube\.com|ytimg\.com)$/i.test(h);
+function ytFmt(j, fid) { return (j.formats || []).find(f => String(f.format_id) === String(fid)); }
+function ytUaFor(f, j) { return (f && f.http_headers && f.http_headers['User-Agent']) || (j && j.http_headers && j.http_headers['User-Agent']) || FF_UA; }
+
+app.get('/api/yt/hls/:id/master.m3u8', async (req, res) => {
+  const id = req.params.id;
+  try {
+    const plan = ytHlsPlan(await ytRaw(id), req.query.q === '720' ? 720 : 1080);
+    if (!plan) return res.status(404).send('HLS yok');
+    const lines = ['#EXTM3U', '#EXT-X-INDEPENDENT-SEGMENTS'];
+    plan.audios.forEach((a, i) => {
+      const name = String(a.language || 'Ses ' + (i + 1)).replace(/"/g, '');
+      lines.push(`#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="a",NAME="${name}",LANGUAGE="${name}",DEFAULT=${i === 0 ? 'YES' : 'NO'},AUTOSELECT=YES,URI="/api/yt/hls/${id}/${a.format_id}.m3u8"`);
+    });
+    plan.vids.forEach(v => {
+      const bw = Math.round(((v.tbr || 1000) + 130) * 1000);
+      lines.push(`#EXT-X-STREAM-INF:BANDWIDTH=${bw},CODECS="${v.vcodec},mp4a.40.2",RESOLUTION=${v.width || 0}x${v.height || 0},AUDIO="a"`);
+      lines.push(`/api/yt/hls/${id}/${v.format_id}.m3u8`);
+    });
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(lines.join('\n') + '\n');
+  } catch (e) { res.status(502).send(e.message); }
+});
+app.get('/api/yt/hls/:id/:fid.m3u8', async (req, res) => {
+  const { id, fid } = req.params;
+  try {
+    const j = await ytRaw(id);
+    const f = ytFmt(j, fid);
+    if (!f) return res.status(404).send('Biçim yok');
+    const up = await upstreamGet(f.url, { 'User-Agent': ytUaFor(f, j) });
+    if (up.statusCode >= 400) { up.resume(); return res.status(502).send('YouTube ' + up.statusCode); }
+    let text = '';
+    up.setEncoding('utf8');
+    up.on('data', c => { text += c; });
+    up.on('end', () => {
+      const seg = u => `/api/yt/seg?id=${id}&f=${encodeURIComponent(fid)}&u=${encodeURIComponent(new URL(u, up.finalUrl).href)}`;
+      const out = text.split('\n').map(line => {
+        const t = line.trim();
+        if (!t) return line;
+        if (t.startsWith('#')) return line.replace(/URI="([^"]+)"/g, (m, u) => `URI="${seg(u)}"`);
+        return seg(t);
+      }).join('\n');
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(out);
+    });
+    up.on('error', e => { if (!res.headersSent) res.status(502).send(e.message); });
+  } catch (e) { res.status(502).send(e.message); }
+});
+app.get('/api/yt/seg', async (req, res) => {
+  let u;
+  try { u = new URL(String(req.query.u || '')); } catch { return res.status(400).end(); }
+  if (!/^https?:$/.test(u.protocol) || !YT_HOST_OK(u.hostname)) return res.status(403).end();
+  try {
+    const j = ytCache.has(req.query.id) ? ytCache.get(req.query.id).j : null;
+    const headers = { 'User-Agent': ytUaFor(j && ytFmt(j, req.query.f), j) };
+    if (req.headers.range) headers.Range = req.headers.range;
+    const up = await upstreamGet(u.href, headers);
+    res.status(up.statusCode);
+    ['content-type', 'content-length', 'content-range', 'accept-ranges'].forEach(h => { if (up.headers[h]) res.setHeader(h, up.headers[h]); });
+    res.setHeader('Cache-Control', 'no-store');
+    res.on('close', () => { if (!up.complete) up.destroy(); });
+    up.on('error', () => { try { res.end(); } catch {} });
+    up.pipe(res);
+  } catch (e) { if (!res.headersSent) res.status(502).end(); }
+});
+
 app.get('/api/yt/info', async (req, res) => {
   const id = String(req.query.id || '');
   try {
@@ -1415,7 +1500,9 @@ app.get('/api/yt/info', async (req, res) => {
     const autoC = j.automatic_captions || {};
     const orig = Object.keys(autoC).find(l => /-orig$/.test(l));
     [...new Set(['tr', 'en', orig, j.language].filter(Boolean))].forEach(l => { if (autoC[l] && !(j.subtitles || {})[l]) add(l.replace(/-orig$/, ''), autoC[l], true); });
+    const hlsPlan = !r.live && process.env.YT_HLS !== '0' ? ytHlsPlan(j, 1080) : null;
     res.json({
+      hls: hlsPlan ? `/api/yt/hls/${id}/master.m3u8` : null,
       title: j.title || '', channel: j.channel || j.uploader || '', duration: r.live ? 0 : (j.duration || 0), live: r.live, container: 'youtube',
       video: { codec: r.h264 ? 'h264' : (r.v.vcodec || ''), height: r.v.height || 0 },
       audio: [{ n: 0, codec: 'aac', channels: (r.a && r.a.audio_channels) || 2, lang: (r.a && r.a.language) || j.language || '', title: '' }],
