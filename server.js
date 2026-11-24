@@ -1005,12 +1005,14 @@ function buildArgs({ input, input2, ua, isRemote, live, transcode, hw, dir, lowr
   // -copyts: altyazılar filmin gerçek saatiyle yazılır (atlanan kısmın altyazıları yanlış yere düşmesin)
   if (!live && start > 0) args.push('-ss', String(start), '-copyts');
   const aIdx = Number.isInteger(audio) && audio >= 0 ? audio : 0;
-  args.push('-analyzeduration', '2000000', '-i', input);
+  // YouTube dosyalarının başlığı her şeyi söylüyor: uzun tanıma okumasına gerek yok (açılış hızlanır)
+  const quickProbe = input2 ? ['-probesize', '500000', '-analyzeduration', '300000'] : ['-analyzeduration', '2000000'];
+  args.push(...quickProbe, '-i', input);
   if (input2) {
     // YouTube: görüntü ve ses ayrı dosyalar
     args.push(...remoteOpts);
     if (!live && start > 0) args.push('-ss', String(start));
-    args.push('-i', input2, '-map', '0:v:0', '-map', '1:a:0');
+    args.push(...quickProbe, '-i', input2, '-map', '0:v:0', '-map', '1:a:0');
   } else {
     args.push('-map', '0:v:0?', '-map', `0:a:${aIdx}?`);
   }
@@ -1109,7 +1111,7 @@ async function runFfmpeg(session, opts) {
     }
     if (session.exited) return false;
     if (session.cancelled) return false;
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, opts.input2 ? 100 : 200));
   }
   session.dumpTail('zaman aşımı: yeterli çıktı üretilemedi');
   return false;
