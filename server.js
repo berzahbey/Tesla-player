@@ -1143,9 +1143,67 @@ function runYtdlp(args, timeoutMs = 45000, opts = {}) {
 // Açılışta yt-dlp'yi arka planda güncelle (YouTube değiştikçe eski sürüm bozulabiliyor)
 if (process.env.YTDLP_AUTO_UPDATE !== '0') {
   const up = spawn('pip', ['install', '-q', '-U', '--break-system-packages', '--no-cache-dir', 'yt-dlp', 'yt-dlp-ejs']);
-  up.on('exit', code => console.log('yt-dlp güncelleme: ' + (code === 0 ? 'tamam' : 'yapılamadı (kod ' + code + ')')));
+  up.on('exit', code => {
+    console.log('yt-dlp güncelleme: ' + (code === 0 ? 'tamam' : 'yapılamadı (kod ' + code + ')'));
+    if (code === 0) setTimeout(() => { ytdRestart(); ytdWorker(); }, 500);
+  });
   up.on('error', () => {});
 }
+
+// Sürekli açık yt-dlp yardımcıları (ytd.py): her istekte Python/yt-dlp yüklenmez, bağlantı açık kalır.
+// İki tane: biri önceden hazırlamayla meşgulken tıklanan video beklemesin.
+const YTD_PY = process.env.YTDLP_PYTHON || 'python3';
+const YTD_SCRIPT = path.join(__dirname, 'ytd.py');
+const ytdPool = [];
+let ytdRid = 0;
+function ytdStart() {
+  const w = { proc: null, ready: false, busy: 0, pending: new Map(), buf: '', dead: false };
+  let p;
+  try { p = spawn(YTD_PY, [YTD_SCRIPT]); } catch { w.dead = true; return w; }
+  w.proc = p;
+  p.stdout.on('data', d => {
+    w.buf += d;
+    let i;
+    while ((i = w.buf.indexOf('\n')) >= 0) {
+      const line = w.buf.slice(0, i); w.buf = w.buf.slice(i + 1);
+      let m; try { m = JSON.parse(line); } catch { continue; }
+      if (m.ready) { w.ready = true; continue; }
+      const cb = w.pending.get(m.rid);
+      if (cb) { w.pending.delete(m.rid); w.busy--; cb(m); }
+    }
+  });
+  p.stderr.on('data', () => {});
+  const die = () => {
+    w.dead = true;
+    for (const cb of w.pending.values()) cb({ ok: false, error: 'yardımcı kapandı' });
+    w.pending.clear();
+  };
+  p.on('exit', die);
+  p.on('error', die);
+  return w;
+}
+function ytdWorker() {
+  for (let i = 0; i < 2; i++) if (!ytdPool[i] || ytdPool[i].dead) ytdPool[i] = ytdStart();
+  return ytdPool.filter(w => !w.dead).sort((a, b) => a.busy - b.busy)[0];
+}
+function ytdRestart() { ytdPool.splice(0).forEach(w => { try { w.proc.kill(); } catch {} }); }
+function ytdExtract(url, client, timeoutMs = 25000) {
+  return new Promise((resolve, reject) => {
+    const w = ytdWorker();
+    if (!w || !w.proc) return reject(new Error('yardımcı yok'));
+    const rid = ++ytdRid;
+    const timer = setTimeout(() => {
+      if (!w.pending.has(rid)) return;
+      w.pending.delete(rid); w.busy--;
+      try { w.proc.kill('SIGKILL'); } catch {}
+      reject(new Error('zaman aşımı'));
+    }, timeoutMs);
+    w.busy++;
+    w.pending.set(rid, m => { clearTimeout(timer); m.ok ? resolve(m.info) : reject(new Error(m.error)); });
+    w.proc.stdin.write(JSON.stringify({ rid, url, client }) + '\n');
+  });
+}
+if (process.env.YT_DAEMON !== '0') ytdWorker();
 
 const YT_ID = /^[A-Za-z0-9_-]{11}$/;
 function ytIdFrom(q) {
@@ -1275,7 +1333,7 @@ function ytPrefetch(ids, front) {
   })();
 }
 app.post('/api/yt/prefetch', (req, res) => {
-  const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).map(String).slice(0, 6);
+  const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).map(String).slice(0, 8);
   ytPrefetch(ids, !!(req.body && req.body.now));
   res.json({ ok: true });
 });
@@ -1290,7 +1348,9 @@ async function ytRawFetch(id) {
   // H.264 görüntü çıkmazsa normal (yavaş) yola geç.
   if (process.env.YT_FAST !== '0') {
     try {
-      const jf = JSON.parse(await runYtdlp(['-J', '--ignore-no-formats-error', '--extractor-args', 'youtube:player_client=visionos', url], 25000, { noCookies: true }));
+      let jf;
+      if (process.env.YT_DAEMON !== '0') { try { jf = await ytdExtract(url, 'visionos'); } catch (e) { console.error(`yt-dlp yardımcı [${id}]: ${e.message}`); } }
+      if (!jf) jf = JSON.parse(await runYtdlp(['-J', '--ignore-no-formats-error', '--extractor-args', 'youtube:player_client=visionos', url], 25000, { noCookies: true }));
       const avc = (jf.formats || []).some(f => f.url && /^avc1/.test(f.vcodec || '') && !/m3u8/.test(f.protocol || ''));
       if (avc && !jf.is_live) {
         console.log(`yt-dlp [${id}] hızlı yol: ${((Date.now() - t0) / 1000).toFixed(1)}sn`);

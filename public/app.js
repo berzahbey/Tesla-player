@@ -2256,7 +2256,7 @@ async function ytSearch(q) {
   ytList.appendChild(home);
   if (!r.length) { ytList.insertAdjacentHTML('beforeend', '<p class="hint">Sonuç bulunamadı.</p>'); return; }
   r.forEach(v => ytList.appendChild(ytItem(v)));
-  ytPrefetch(r.filter(v => !v.live).slice(0, 4).map(v => v.id));
+  ytPrefetch(r.filter(v => !v.live).slice(0, 6).map(v => v.id));
   if (r.length === 1 && r[0].link) ytList.querySelector('.yt-item').click();
 }
 document.getElementById('yt-search-form').addEventListener('submit', e => {
@@ -2323,7 +2323,7 @@ async function ytRender(v) {
   if (r.error) { ytList.insertAdjacentHTML('beforeend', `<p class="hint yt-err">${ytEsc(r.error)}</p>`); return; }
   if (!r.items.length) { ytList.insertAdjacentHTML('beforeend', '<p class="hint">Bu liste boş.</p>'); return; }
   r.items.forEach(it => ytList.appendChild(it.type === 'video' ? ytItem(it) : ytListItem(it)));
-  ytPrefetch(r.items.filter(it => it.type === 'video' && !it.live).slice(0, 4).map(it => it.id));
+  ytPrefetch(r.items.filter(it => it.type === 'video' && !it.live).slice(0, 6).map(it => it.id));
 }
 document.getElementById('yt-cookie-pick').addEventListener('click', () => document.getElementById('yt-cookie-file').click());
 document.getElementById('yt-cookie-file').addEventListener('change', async e => {
