@@ -47,3 +47,4 @@ docker compose up -d --build
 - YouTube sekmesi: arama ya da bağlantı yapıştırma; videolar film oynatıcıda açılır (durdur/oynat, sarma, altyazı, kaldığı yerden devam, iPhone'da kilit ekranında ses). Yarım kalan videolar "Kaldığın yerden" listesinde (sunucuda saklanır).
 - Videolar sunucuda `yt-dlp` ile alınır (YouTube'un gömülü oynatıcısı kullanılmaz): en fazla 1080p H.264 görüntü + AAC ses, dönüştürmeden.
 - `yt-dlp` her açılışta arka planda güncellenir (kapatmak için `YTDLP_AUTO_UPDATE=0`).
+- Kendi hesabın: YouTube sekmesinde "YouTube hesabımı bağla" → tarayıcıdan dışa aktarılan `cookies.txt` bir kere yüklenir (sunucuda `data/yt-cookies.txt`, sadece sunucu okur). Abonelikler, Sonra izle, Beğenilenler, Listelerim, Kanallarım, Geçmiş, Önerilenler görünür.

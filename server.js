@@ -1118,10 +1118,14 @@ async function runFfmpeg(session, opts) {
 // ---- YouTube (yt-dlp ile; YouTube'un gömülü oynatıcısı kullanılmaz) ----
 const YTDLP = process.env.YTDLP_BIN || 'yt-dlp';
 // yt-dlp YouTube için bir JavaScript motoru istiyor: konteynerdeki node kullanılır
-const YTDLP_BASE = ['--no-warnings', '--no-playlist', '--js-runtimes', 'node'];
-function runYtdlp(args, timeoutMs = 45000) {
+const YTDLP_BASE = ['--no-warnings', '--js-runtimes', 'node'];
+// Kendi YouTube hesabı: tarayıcıdan alınan çerez dosyası (yt-dlp şifreyle giriş yapamıyor)
+const YT_COOKIES = path.join(DATA_DIR, 'yt-cookies.txt');
+function ytHasAccount() { try { return fs.statSync(YT_COOKIES).size > 0; } catch { return false; } }
+function runYtdlp(args, timeoutMs = 45000, opts = {}) {
   return new Promise((resolve, reject) => {
-    const p = spawn(YTDLP, [...YTDLP_BASE, ...args]);
+    const extra = [...(opts.playlist ? [] : ['--no-playlist']), ...(ytHasAccount() && !opts.noCookies ? ['--cookies', YT_COOKIES] : [])];
+    const p = spawn(YTDLP, [...YTDLP_BASE, ...extra, ...args]);
     let out = '', err = '';
     p.stdout.on('data', d => { out += d; });
     p.stderr.on('data', d => { err += d; if (err.length > 4000) err = err.slice(-4000); });
@@ -1158,13 +1162,87 @@ app.get('/api/yt/search', async (req, res) => {
   const direct = ytIdFrom(q);
   if (direct) return res.json([{ id: direct, title: 'YouTube videosu', channel: '', duration: 0, thumb: ytThumb(direct), link: true }]);
   try {
-    const out = await runYtdlp(['--flat-playlist', '-J', `ytsearch30:${q}`], 30000);
+    const out = await runYtdlp(['--flat-playlist', '-J', `ytsearch30:${q}`], 30000, { playlist: true });
     const j = JSON.parse(out);
     res.json((j.entries || []).filter(e => e && YT_ID.test(e.id || '')).map(e => ({
       id: e.id, title: e.title || '', channel: e.channel || e.uploader || '',
       duration: e.duration || 0, live: e.live_status === 'is_live', thumb: ytThumb(e.id)
     })));
   } catch (e) { res.status(502).json({ error: 'Arama yapılamadı: ' + e.message }); }
+});
+
+
+// ---- YouTube hesabı: abonelikler, sonra izle, beğenilenler, geçmiş, oynatma listeleri ----
+const YT_FEEDS = {
+  subs: { src: ':ytsubs', title: 'Abonelikler' },
+  wl: { src: ':ytwatchlater', title: 'Sonra izle' },
+  liked: { src: ':ytfav', title: 'Beğenilenler' },
+  history: { src: ':ythis', title: 'Geçmiş' },
+  rec: { src: ':ytrec', title: 'Önerilenler' },
+  playlists: { src: 'https://www.youtube.com/feed/playlists', title: 'Oynatma listelerim' },
+  channels: { src: 'https://www.youtube.com/feed/channels', title: 'Kanallarım' }
+};
+app.get('/api/yt/account', (req, res) => res.json({ connected: ytHasAccount() }));
+app.post('/api/yt/account', async (req, res) => {
+  const b = req.body || {};
+  if (b.remove) { try { fs.unlinkSync(YT_COOKIES); } catch {} ytListCache.clear(); return res.json({ ok: true, connected: false }); }
+  const text = String(b.text || '');
+  if (!/youtube\.com/.test(text) || !/\t/.test(text)) return res.status(400).json({ error: 'Bu bir YouTube cookies.txt dosyası değil' });
+  const tmp = YT_COOKIES + '.new';
+  fs.writeFileSync(tmp, text.startsWith('# Netscape') ? text : '# Netscape HTTP Cookie File\n' + text, { mode: 0o600 });
+  try {
+    // Gerçekten giriş yapılmış mı: "Sonra izle" listesine bakmayı dene
+    await new Promise((resolve, reject) => {
+      const p = spawn(YTDLP, [...YTDLP_BASE, '--cookies', tmp, '--flat-playlist', '-J', '--playlist-end', '1', ':ytwatchlater']);
+      let err = '';
+      p.stderr.on('data', d => { err += d; });
+      const t = setTimeout(() => { try { p.kill('SIGKILL'); } catch {} }, 45000);
+      p.on('exit', code => { clearTimeout(t); code === 0 ? resolve() : reject(new Error(err)); });
+      p.on('error', e => { clearTimeout(t); reject(e); });
+    });
+    fs.renameSync(tmp, YT_COOKIES);
+    ytListCache.clear();
+    res.json({ ok: true, connected: true });
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch {}
+    console.error('YouTube çerez denemesi başarısız:', String(e.message).split('\n').filter(l => /ERROR/.test(l)).pop() || e.message);
+    res.status(400).json({ error: 'Bu çerezlerle YouTube\'a giriş yapılamadı (süresi dolmuş olabilir). Yeniden dışa aktarıp tekrar dene.' });
+  }
+});
+const ytListCache = new Map();
+function ytEntry(e) {
+  const thumbs = e.thumbnails || [];
+  const thumb = thumbs.length ? thumbs[thumbs.length - 1].url : '';
+  const isVideo = YT_ID.test(e.id || '') && (!e.ie_key || e.ie_key === 'Youtube') && !/[?&]list=|\/playlist|\/channel\/|\/@/.test(e.url || '');
+  if (isVideo) return { type: 'video', id: e.id, title: e.title || '', channel: e.channel || e.uploader || '', duration: e.duration || 0,
+    live: e.live_status === 'is_live', thumb: `https://i.ytimg.com/vi/${e.id}/mqdefault.jpg` };
+  const url = e.url || (e.id && /^(PL|LL|WL|UU|FL|RD|OL)/.test(e.id) ? 'https://www.youtube.com/playlist?list=' + e.id : '');
+  if (!url) return null;
+  return { type: 'list', title: e.title || e.channel || 'Liste', channel: e.channel || e.uploader || '', count: e.playlist_count || 0, thumb, url };
+}
+// GET /api/yt/list?feed=subs|wl|liked|history|rec|playlists|channels  ya da  ?url=<youtube oynatma listesi/kanal>
+app.get('/api/yt/list', async (req, res) => {
+  let src, title;
+  if (req.query.feed) {
+    const f = YT_FEEDS[req.query.feed];
+    if (!f) return res.status(400).json({ error: 'Bilinmeyen liste' });
+    if (!ytHasAccount()) return res.status(400).json({ error: 'YouTube hesabı bağlı değil' });
+    src = f.src; title = f.title;
+  } else {
+    const u = String(req.query.url || '');
+    if (!/^https:\/\/(www\.|m\.)?youtube\.com\//.test(u)) return res.status(400).json({ error: 'Geçersiz adres' });
+    src = /\/(@[^/]+|channel\/[^/]+|c\/[^/]+)\/?$/.test(u) ? u.replace(/\/?$/, '/videos') : u;
+    title = String(req.query.title || '');
+  }
+  const c = ytListCache.get(src);
+  if (c && Date.now() - c.t < 120000) return res.json(c.data);
+  try {
+    const out = await runYtdlp(['--flat-playlist', '-J', '--playlist-end', '80', src], 60000, { playlist: true });
+    const j = JSON.parse(out);
+    const data = { title: title || j.title || '', items: (j.entries || []).map(ytEntry).filter(Boolean) };
+    ytListCache.set(src, { t: Date.now(), data });
+    res.json(data);
+  } catch (e) { res.status(502).json({ error: 'Liste alınamadı: ' + e.message }); }
 });
 
 // Video bilgisi ve en uygun biçimler (H.264 görüntü + AAC ses). 1 saat saklanır (adresler ~6 saat geçerli)

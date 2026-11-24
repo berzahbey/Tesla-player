@@ -426,3 +426,18 @@ body.platform-tesla .yt-ch { font-size: 14px; }
   body.platform-mobile:not(.fs-on) .tab-btn { font-size: 13px; padding: 10px 2px; }
   body.platform-mobile:not(.fs-on) .yt-thumb { width: 112px; }
 }
+
+/* YouTube hesabı */
+.yt-feeds { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 10px; padding-bottom: 2px; scrollbar-width: none; }
+.yt-feeds::-webkit-scrollbar { display: none; }
+.yt-chip { flex-shrink: 0; padding: 7px 12px; border-radius: 16px; border: 1px solid #333; background: #1e1e1e; color: #ddd; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.yt-chip.active { background: #fff; color: #111; border-color: #fff; }
+.yt-chip.connect { color: #fff; border-color: #2b7cff; }
+.yt-account { background: #1a1a1a; border: 1px solid #333; border-radius: 10px; padding: 12px; margin-bottom: 10px; font-size: 13px; color: #ccc; line-height: 1.45; }
+.yt-account h3 { margin: 0 0 6px; color: #fff; font-size: 15px; }
+.yt-account p { margin: 0 0 8px; }
+.yt-account ol { margin: 0 0 10px; padding-left: 18px; }
+.yt-account button { display: block; width: 100%; padding: 10px; margin-top: 6px; border: none; border-radius: 8px; background: #2b7cff; color: #fff; font-weight: 600; cursor: pointer; }
+.yt-account .yt-secondary { background: #2a2a2a; color: #ccc; font-weight: 400; }
+.yt-listicon { display: flex; align-items: center; justify-content: center; height: 100%; font-size: 28px; color: #777; }
+body.platform-tesla .yt-chip { padding: 12px 18px; font-size: 17px; }

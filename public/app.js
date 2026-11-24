@@ -2212,6 +2212,8 @@ async function ytPlay(v) {
 }
 // Ana görünüm: yarım kalan YouTube videoları (sunucuda saklanır, her cihazda aynı)
 function showYtHome() {
+  ytStack = [];
+  ytMarkChip(null);
   ytList.innerHTML = '';
   const rm = appState.resumeMovies || {};
   const items = Object.keys(rm).filter(k => k.startsWith('yt:') && rm[k].label)
@@ -2228,6 +2230,8 @@ function showYtHome() {
   });
 }
 async function ytSearch(q) {
+  ytStack = [];
+  ytMarkChip(null);
   ytList.innerHTML = '<p class="hint">Aranıyor…</p>';
   let r;
   try { r = await fetch('/api/yt/search?q=' + encodeURIComponent(q)).then(x => x.json()); } catch (e) { r = { error: e.message }; }
@@ -2249,7 +2253,92 @@ document.getElementById('yt-search-form').addEventListener('submit', e => {
   ytQ.blur();
   if (q) ytSearch(q); else showYtHome();
 });
+// ---- Kendi hesabı: abonelikler, sonra izle, beğenilenler, listeler ----
+let ytStack = [];
+let ytAccount = false;
+const YT_FEED_CHIPS = [['subs', 'Abonelikler'], ['wl', 'Sonra izle'], ['liked', 'Beğenilenler'], ['playlists', 'Listelerim'],
+  ['channels', 'Kanallarım'], ['history', 'Geçmiş'], ['rec', 'Önerilenler']];
+function ytMarkChip(feed) {
+  document.querySelectorAll('#yt-feeds .yt-chip').forEach(c => c.classList.toggle('active', !!feed && c.dataset.feed === feed));
+}
+function renderYtFeeds() {
+  const box = document.getElementById('yt-feeds');
+  box.innerHTML = '';
+  const chip = (text, fn, feed, cls) => {
+    const b = document.createElement('button');
+    b.className = 'yt-chip' + (cls ? ' ' + cls : '');
+    b.textContent = text;
+    if (feed) b.dataset.feed = feed;
+    b.onclick = fn;
+    box.appendChild(b);
+  };
+  if (!ytAccount) { chip('👤 YouTube hesabımı bağla', ytShowAccount, null, 'connect'); return; }
+  YT_FEED_CHIPS.forEach(([feed, title]) => chip(title, () => { ytStack = []; ytMarkChip(feed); ytOpen({ feed, title }); }, feed));
+  chip('⚙', ytShowAccount, null, 'gear');
+}
+function ytShowAccount() {
+  document.getElementById('yt-account-remove').style.display = ytAccount ? '' : 'none';
+  document.getElementById('yt-account-box').style.display = 'block';
+}
+function ytListItem(it) {
+  const el = document.createElement('div');
+  el.className = 'yt-item';
+  const thumb = it.thumb ? `<img loading="lazy" src="${ytEsc(it.thumb)}" alt="">` : '<span class="yt-listicon">☰</span>';
+  el.innerHTML = `<div class="yt-thumb">${thumb}${it.count ? `<span class="yt-badge">${it.count} video</span>` : ''}</div>` +
+    `<div class="yt-meta"><div class="yt-title">${ytEsc(it.title)}</div><div class="yt-ch">${ytEsc(it.channel)}</div></div>`;
+  el.onclick = () => ytOpen({ url: it.url, title: it.title });
+  return el;
+}
+function ytOpen(view) { ytStack.push(view); ytRender(view); }
+function ytBack() {
+  ytStack.pop();
+  const v = ytStack[ytStack.length - 1];
+  if (v) ytRender(v); else showYtHome();
+}
+async function ytRender(v) {
+  ytList.innerHTML = '<p class="hint">Yükleniyor…</p>';
+  const url = v.feed ? '/api/yt/list?feed=' + v.feed : '/api/yt/list?url=' + encodeURIComponent(v.url) + '&title=' + encodeURIComponent(v.title || '');
+  let r;
+  try { r = await fetch(url).then(x => x.json()); } catch (e) { r = { error: e.message }; }
+  if (ytStack[ytStack.length - 1] !== v) return;
+  ytList.innerHTML = '';
+  const back = document.createElement('div');
+  back.className = 'channel-item';
+  back.textContent = '⬅ ' + (ytStack.length > 1 ? 'Geri' : 'Kaldığın yerden');
+  back.onclick = ytBack;
+  ytList.appendChild(back);
+  ytList.insertAdjacentHTML('beforeend', `<div class="list-heading">${ytEsc(r.title || v.title || '')}</div>`);
+  if (r.error) { ytList.insertAdjacentHTML('beforeend', `<p class="hint yt-err">${ytEsc(r.error)}</p>`); return; }
+  if (!r.items.length) { ytList.insertAdjacentHTML('beforeend', '<p class="hint">Bu liste boş.</p>'); return; }
+  r.items.forEach(it => ytList.appendChild(it.type === 'video' ? ytItem(it) : ytListItem(it)));
+}
+document.getElementById('yt-cookie-pick').addEventListener('click', () => document.getElementById('yt-cookie-file').click());
+document.getElementById('yt-cookie-file').addEventListener('change', async e => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  const text = await f.text();
+  showToast('Hesap deneniyor…');
+  const r = await postJson('/api/yt/account', { text });
+  if (!r.ok) return showToast(r.error || 'Bağlanamadı');
+  ytAccount = true;
+  document.getElementById('yt-account-box').style.display = 'none';
+  renderYtFeeds();
+  showToast('YouTube hesabı bağlandı');
+  ytStack = []; ytMarkChip('subs'); ytOpen({ feed: 'subs', title: 'Abonelikler' });
+});
+document.getElementById('yt-account-remove').addEventListener('click', async () => {
+  if (!confirm('YouTube hesap bağlantısı kaldırılsın mı?')) return;
+  await postJson('/api/yt/account', { remove: true });
+  ytAccount = false;
+  document.getElementById('yt-account-box').style.display = 'none';
+  renderYtFeeds();
+  showYtHome();
+});
+document.getElementById('yt-account-close').addEventListener('click', () => { document.getElementById('yt-account-box').style.display = 'none'; });
+
 function initYoutube() {
+  fetch('/api/yt/account').then(r => r.json()).then(a => { ytAccount = !!a.connected; renderYtFeeds(); }).catch(() => renderYtFeeds());
   const last = lsGet('tp-yt-q', '');
   if (last) { ytQ.value = last; ytSearch(last); } else showYtHome();
 }

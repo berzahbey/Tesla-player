@@ -109,6 +109,22 @@
         <input id="yt-q" type="search" placeholder="YouTube'da ara ya da link yapıştır" enterkeyhint="search" autocomplete="off">
         <button type="submit">Ara</button>
       </form>
+      <div id="yt-feeds" class="yt-feeds"></div>
+      <div id="yt-account-box" class="yt-account" style="display:none">
+        <h3>YouTube hesabını bağla</h3>
+        <p>YouTube şifreyle girişe izin vermiyor; tarayıcındaki oturumun çerez dosyası (cookies.txt) bir kere yüklenir ve sunucuda saklanır.</p>
+        <ol>
+          <li>Mac'te Chrome'a <b>Get cookies.txt LOCALLY</b> eklentisini kur; eklenti ayarlarında <b>Gizli modda izin ver</b>'i aç.</li>
+          <li>Yeni <b>gizli pencere</b> aç, youtube.com'da hesabınla oturum aç.</li>
+          <li>Eklentiye tıkla → <b>Export</b> → cookies.txt dosyası iner.</li>
+          <li>Gizli pencereyi hemen kapat (açık kalırsa YouTube çerezleri yeniler ve dosya geçersiz olur).</li>
+          <li>Aşağıdan dosyayı seç.</li>
+        </ol>
+        <button id="yt-cookie-pick">cookies.txt dosyasını seç</button>
+        <button id="yt-account-remove" class="yt-secondary" style="display:none">Hesap bağlantısını kaldır</button>
+        <button id="yt-account-close" class="yt-secondary">Kapat</button>
+        <input type="file" id="yt-cookie-file" accept=".txt,text/plain" style="display:none">
+      </div>
       <div id="yt-list"></div>
     </div>
     <div class="mp-player" id="yt-player-panel">
