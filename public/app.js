@@ -402,8 +402,8 @@ function playChannel(name, url) {
     }, { once: true });
     iptvVideo.addEventListener('error', () => {
       if (token === playToken && iptvVideo.getAttribute('src')) {
-        dbg('tarayıcı açamadı: sunucu üzerinden deneniyor');
-        playMovie(url, name, { server: true });
+        dbg('tarayıcı açamadı: akış olarak (hls.js) deneniyor');
+        playMovie(url, name, { hlsFirst: true });
       }
     }, { once: true });
   }
@@ -1686,7 +1686,7 @@ async function playMovie(url, label, opts = {}) {
   movie.local = opts.local || null;
   movie.yt = opts.yt || null;
   setMovieMode(true);
-  Object.assign(movie, { url, label, audio: 0, offset: 0, mode: 'direct', pendingAt: null, info: null, infoLoaded: false,
+  Object.assign(movie, { url, label, audio: 0, offset: 0, mode: 'direct', pendingAt: null, info: null, infoLoaded: false, hlsProxy: false,
     subAuto: false, sessionSubs: [], lastSave: Date.now() });
   MV().dataset.title = label;
   document.getElementById('mv-title').textContent = label;
@@ -1708,8 +1708,30 @@ async function playMovie(url, label, opts = {}) {
     if (movie.info && movie.info.hls && !movie.info.live) return movieYtHls(at);
     return movieSession(at);
   }
+  if (opts.hlsFirst && typeof Hls !== 'undefined' && Hls.isSupported() && !movie.local) return movieHlsProxy(at);
   if (opts.server || SERVER_EXT.test(movieExt(url))) await movieSession(at);
   else movieDirect(at);
+}
+
+// Uzantısı olmayan HLS film adresleri (ör. Cloudflare arkasındaki kaynaklar): Safari kendisi oynatıyor,
+// Android TV/Tesla tarayıcısı oynatamıyor. hls.js ile, sunucu üzerinden (aynı adres: CORS sorunu yok).
+// Sarma anında çalışır, sunucuda ffmpeg çalışmaz. Olmazsa sunucu akışına geçer.
+function movieHlsProxy(at) {
+  const ctx = mvCtx();
+  const my = ++movie.token;
+  movie.mode = 'direct'; movie.offset = 0; movie.pendingAt = null; movie.hlsProxy = true;
+  ctx.release();
+  const raw = innerUrl(movie.url);
+  const src = '/api/xtream-stream?url=' + encodeURIComponent(raw);
+  dbg('film: hls.js ile sunucu üzerinden');
+  if (at > 0) ctx.video.addEventListener('loadedmetadata', () => { try { if (ctx.video.currentTime < 5) ctx.video.currentTime = at; } catch {} }, { once: true });
+  ctx.attach(src, { onFatal: why => {
+    if (my !== movie.token || !movie.active || movie.ctx !== ctx || movie.mode !== 'direct') return;
+    dbg('film hls.js açılamadı (' + why + '), sunucu akışına geçiliyor');
+    movieSession(movieNow());
+  } });
+  renderCues();
+  updateMovieUi();
 }
 
 function movieYtHls(at) {
@@ -2089,6 +2111,10 @@ let mvUiAt = 0;
   // Doğrudan açılamayan dosya: sunucu akışına geç
   v.addEventListener('error', () => {
     if (!mine() || movie.mode !== 'direct' || !v.getAttribute('src')) return;
+    if (!movie.hlsProxy && !movie.local && !movie.yt && typeof Hls !== 'undefined' && Hls.isSupported() && v.error && v.error.code === 4) {
+      dbg('film doğrudan açılamadı (biçim), akış olarak deneniyor');
+      return movieHlsProxy(movieNow());
+    }
     dbg('film doğrudan açılamadı, sunucu akışına geçiliyor');
     movieSession(movieNow());
   });

@@ -820,12 +820,18 @@ app.get('/api/xtream-stream', async (req, res) => {
   if (!targetUrl) return res.status(400).send('url parametresi gerekli');
   if (req.query.remux === '1') return remuxStream(targetUrl, req, res);
 
-  const headers = { 'User-Agent': 'VLC/3.0.18 LibVLC/3.0.18' };
+  const headers = { 'User-Agent': uaFor(targetUrl) };
   if (req.headers.range) headers['Range'] = req.headers.range;
 
   let up;
   try {
     up = await upstreamGet(targetUrl, headers);
+    if (up.statusCode === 403 && headers['User-Agent'] !== BROWSER_UA) {
+      up.resume();
+      headers['User-Agent'] = BROWSER_UA;
+      up = await upstreamGet(targetUrl, headers);
+      if (up.statusCode < 400) rememberBrowserHost(targetUrl);
+    }
   } catch (err) {
     if (!res.headersSent) res.status(502).send('Hata: ' + err.message);
     return;
@@ -844,7 +850,9 @@ app.get('/api/xtream-stream', async (req, res) => {
     up.on('end', () => {
       const rewritten = text.split('\n').map(line => {
         const trimmed = line.trim();
-        if (!trimmed || trimmed.startsWith('#')) return line;
+        if (!trimmed) return line;
+        // Etiket içindeki adresler de (şifre anahtarı, başlangıç parçası, ses/altyazı listeleri) sunucu üzerinden
+        if (trimmed.startsWith('#')) return line.replace(/URI="([^"]+)"/g, (m, u) => `URI="/api/xtream-stream?url=${encodeURIComponent(new URL(u, up.finalUrl).href)}"`);
         const absolute = new URL(trimmed, up.finalUrl).href;
         return '/api/xtream-stream?url=' + encodeURIComponent(absolute);
       }).join('\n');
@@ -888,6 +896,33 @@ fs.rmSync(HLS_TMP_ROOT, { recursive: true, force: true });
 fs.mkdirSync(HLS_TMP_ROOT, { recursive: true });
 
 const FF_UA = 'VLC/3.0.18 LibVLC/3.0.18';
+// Bazı siteler (ör. Cloudflare arkasındaki film kaynakları) VLC kimliğini reddediyor (403), tarayıcıyı
+// kabul ediyor. Reddedince tarayıcı kimliğiyle tekrar dene ve o siteyi hatırla.
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+const browserUaHosts = new Set();
+function hostOf(u) { try { return new URL(u).hostname; } catch { return ''; } }
+function uaFor(u) { return browserUaHosts.has(hostOf(u)) ? BROWSER_UA : FF_UA; }
+// Uzantısı olmayan film adresi HLS mi? (Yeni ffmpeg, uzantısız + standart dışı içerik türünü tanımıyor:
+// böyle kaynaklar kendi aracımız üzerinden, doğru içerik türüyle verilir)
+const VIDEO_EXT_RE = /\.(mkv|mp4|m4v|mov|avi|webm|wmv|flv|mpg|mpeg|m2ts|ts|vob|divx|3gp)(\?|#|$)/i;
+async function sniffHls(url) {
+  if (VIDEO_EXT_RE.test(url) || /\.m3u8(\?|$)/i.test(url)) return false;
+  try {
+    let up = await upstreamGet(url, { 'User-Agent': uaFor(url) });
+    if (up.statusCode === 403 && uaFor(url) !== BROWSER_UA) {
+      up.resume();
+      up = await upstreamGet(url, { 'User-Agent': BROWSER_UA });
+      if (up.statusCode < 400) rememberBrowserHost(url);
+    }
+    const ct = String(up.headers['content-type'] || '');
+    up.destroy();
+    return up.statusCode < 400 && /mpegurl/i.test(ct);
+  } catch { return false; }
+}
+function rememberBrowserHost(u) {
+  const h = hostOf(u);
+  if (h && !browserUaHosts.has(h)) { browserUaHosts.add(h); console.log(`Kaynak tarayıcı kimliği istiyor, hatırlandı: ${h}`); }
+}
 const VAAPI_DEVICE = process.env.VAAPI_DEVICE || '/dev/dri/renderD128';
 // Dönüştürülen kanallar (4K/UHD HEVC) her cihazda 720p: parçalar yarı boyutta -> daha hızlı açılış,
 // mobil bağlantıda (Tesla) daha az takılma, 1080p çözemeyen tabletlerde de çalışır.
@@ -944,10 +979,18 @@ function resolveRemoteSrc(src) {
   return src;
 }
 
-function probe(input, isRemote) {
+async function probeAny(input, isRemote) {
+  let r = await probe(input, isRemote);
+  if (!r && isRemote && uaFor(input) !== BROWSER_UA) {
+    r = await probe(input, isRemote, BROWSER_UA);
+    if (r) rememberBrowserHost(input);
+  }
+  return r;
+}
+function probe(input, isRemote, ua) {
   return new Promise(resolve => {
     const args = ['-v', 'error'];
-    if (isRemote) args.push('-user_agent', FF_UA, '-rw_timeout', '10000000');
+    if (isRemote) args.push('-user_agent', ua || uaFor(input), '-rw_timeout', '10000000');
     args.push('-analyzeduration', '3000000', '-probesize', '3000000',
       '-show_entries', 'stream=codec_type,codec_name,height', '-of', 'json', '-i', input);
     const p = spawn('ffprobe', args);
@@ -970,12 +1013,12 @@ function needsTranscode(streams) {
   return (v.height || 0) > TRANSCODE_MAX_HEIGHT;
 }
 
-function buildArgs({ input, input2, ua, isRemote, live, transcode, hw, dir, lowres, start, audio, subs }) {
+function buildArgs({ input, input2, ua, isRemote, live, transcode, hw, dir, lowres, start, audio, subs, hlsInput }) {
   // 720p ve altı: Main profil, seviye 3.1 (en eski cihazların bile çözebildiği biçim)
   const H = lowres ? Math.min(720, TRANSCODE_MAX_HEIGHT) : TRANSCODE_MAX_HEIGHT;
   lowres = H <= 720;
   const args = ['-hide_banner', '-loglevel', 'warning', '-fflags', '+genpts+discardcorrupt'];
-  const remoteOpts = isRemote ? ['-user_agent', ua || FF_UA, '-reconnect', '1', '-reconnect_streamed', '1',
+  const remoteOpts = isRemote ? ['-user_agent', ua || uaFor(input), '-reconnect', '1', '-reconnect_streamed', '1',
     '-reconnect_on_network_error', '1', '-reconnect_delay_max', '5'] : [];
   args.push(...remoteOpts);
   if (transcode && hw) {
@@ -1007,6 +1050,8 @@ function buildArgs({ input, input2, ua, isRemote, live, transcode, hw, dir, lowr
   const aIdx = Number.isInteger(audio) && audio >= 0 ? audio : 0;
   // YouTube dosyalarının başlığı her şeyi söylüyor: uzun tanıma okumasına gerek yok (açılış hızlanır)
   const quickProbe = input2 ? ['-probesize', '500000', '-analyzeduration', '300000'] : ['-analyzeduration', '2000000'];
+  // Film HLS'i kendi aracımız üzerinden: parça adreslerinin uzantısı yok
+  if (hlsInput && !live) { args.push('-allowed_extensions', 'ALL'); if (hlsPickyOpt) args.push('-extension_picky', '0'); }
   args.push(...quickProbe, '-i', input);
   if (input2) {
     // YouTube: görüntü ve ses ayrı dosyalar
@@ -1087,6 +1132,7 @@ async function runFfmpeg(session, opts) {
     }
     // Sağlayıcı yayını hiç vermediyse (ör. tek bağlantı limiti dolu: 4XX / 509) bunu işaretle
     session.sourceRejected = !session.ready && tail.some(l => /Server returned|HTTP error|Error opening input/i.test(l));
+    session.forbidden = !session.ready && tail.some(l => /403 Forbidden/i.test(l));
   });
   ff.on('error', err => { session.exited = true; console.error(`${tag} başlatılamadı: ${err.message}`); });
   session.dumpTail = (why) => {
@@ -1563,12 +1609,17 @@ app.get('/api/media/info', async (req, res) => {
   catch (e) { return res.status(400).json({ error: e.message }); }
   if (!input) return res.status(400).json({ error: 'src gerekli' });
   if (mediaInfoCache.has(input)) return res.json(mediaInfoCache.get(input));
+  const cacheKey = input;
+  let viaProxy = false;
+  if (!isLocal && await sniffHls(input)) { input = `http://127.0.0.1:${PORT}/api/xtream-stream?url=${encodeURIComponent(input)}`; viaProxy = true; }
+  const runInfo = ua => {
   const args = ['-v', 'error'];
-  if (!isLocal) args.push('-user_agent', FF_UA, '-rw_timeout', '15000000');
+  if (!isLocal && !viaProxy) args.push('-user_agent', ua, '-rw_timeout', '15000000');
+  if (viaProxy) { args.push('-allowed_extensions', 'ALL'); if (hlsPickyOpt) args.push('-extension_picky', '0'); }
   args.push('-analyzeduration', '5000000', '-probesize', '5000000',
     '-show_entries', 'format=duration,format_name:stream=index,codec_type,codec_name,height,channels:stream_tags=language,title',
     '-of', 'json', '-i', input);
-  const out = await new Promise(resolve => {
+  return new Promise(resolve => {
     const p = spawn('ffprobe', args);
     let o = '';
     p.stdout.on('data', d => { o += d; });
@@ -1576,6 +1627,12 @@ app.get('/api/media/info', async (req, res) => {
     p.on('exit', () => { clearTimeout(timer); try { resolve(JSON.parse(o)); } catch { resolve(null); } });
     p.on('error', () => { clearTimeout(timer); resolve(null); });
   });
+  };
+  let out = await runInfo(isLocal ? '' : uaFor(input));
+  if (!out && !isLocal && !viaProxy && uaFor(input) !== BROWSER_UA) {
+    out = await runInfo(BROWSER_UA);
+    if (out) rememberBrowserHost(input);
+  }
   if (!out) return res.status(502).json({ error: 'Dosya bilgisi alınamadı' });
   const streams = out.streams || [];
   const tag = (st, k) => (st.tags && (st.tags[k] || st.tags[k.toUpperCase()])) || '';
@@ -1591,7 +1648,7 @@ app.get('/api/media/info', async (req, res) => {
       n, codec: st.codec_name, lang: tag(st, 'language'), title: tag(st, 'title'), text: TEXT_SUBS.has(st.codec_name)
     }))
   };
-  mediaInfoCache.set(input, info);
+  mediaInfoCache.set(cacheKey, info);
   if (mediaInfoCache.size > 300) mediaInfoCache.delete(mediaInfoCache.keys().next().value);
   res.json(info);
 });
@@ -1621,6 +1678,11 @@ app.get('/api/session/start', async (req, res) => {
     }
   }
   if (!input) return res.status(400).json({ error: 'src gerekli' });
+  let hlsInput = false;
+  if (!live && !isLocal && !req.query.yt && await sniffHls(input)) {
+    input = `http://127.0.0.1:${PORT}/api/xtream-stream?url=${encodeURIComponent(input)}`;
+    hlsInput = true;
+  }
 
   // Aynı anda tek canlı oturum: yeni kanal açılınca eskisini kapat (sağlayıcı bağlantı limiti)
   if (live) for (const [id, s] of sessions) if (s.live) stopSession(id);
@@ -1633,7 +1695,7 @@ app.get('/api/session/start', async (req, res) => {
 
   let transcode = mode === 'transcode';
   if (ytTranscode !== null) transcode = ytTranscode;
-  else if (mode === 'auto') transcode = needsTranscode(await probe(input, !isLocal));
+  else if (mode === 'auto') transcode = needsTranscode(await probeAny(input, !isLocal));
 
   const id = crypto.randomUUID();
   const dir = path.join(HLS_TMP_ROOT, id);
@@ -1643,7 +1705,7 @@ app.get('/api/session/start', async (req, res) => {
   res.on('close', () => { if (!res.writableEnded) session.cancelled = true; });
 
   if (lowres && !req.query.yt) transcode = true;
-  const base = { input, input2, ua: ytUa, isRemote: !isLocal, live, transcode, dir, lowres, start, audio, subs: req.query.yt ? [] : subs };
+  const base = { input, input2, ua: ytUa, isRemote: !isLocal && !hlsInput, live, transcode, dir, lowres, start, audio, subs: req.query.yt ? [] : subs, hlsInput };
   const resetDir = () => {
     try { session.proc.kill('SIGKILL'); } catch {}
     fs.rmSync(dir, { recursive: true, force: true });
@@ -1651,7 +1713,16 @@ app.get('/api/session/start', async (req, res) => {
   };
   let ok = await runFfmpeg(session, { ...base, hw: transcode && vaapiOk });
   // Sağlayıcı reddettiyse (önceki kanalın oturumu henüz kapanmadı): biraz bekleyip tekrar dene
-  for (let attempt = 1; !ok && session.sourceRejected && !session.cancelled && attempt <= 2; attempt++) {
+  // Kaynak VLC kimliğini reddetti (403): beklemeden tarayıcı kimliğiyle dene
+  if (!ok && session.forbidden && base.isRemote && !req.query.yt && uaFor(input) !== BROWSER_UA && !session.cancelled) {
+    console.error('Kaynak 403 verdi, tarayıcı kimliğiyle tekrar deneniyor');
+    base.ua = BROWSER_UA;
+    resetDir();
+    session.sourceRejected = false; session.forbidden = false;
+    ok = await runFfmpeg(session, { ...base, hw: transcode && vaapiOk });
+    if (ok) rememberBrowserHost(input);
+  }
+  for (let attempt = 1; !ok && session.sourceRejected && !session.forbidden && !session.cancelled && attempt <= 2; attempt++) {
     console.error(`Sağlayıcı yayını vermedi, ${attempt * 1.5} sn sonra tekrar deneniyor (${attempt}/2)`);
     await new Promise(r => setTimeout(r, attempt * 1500));
     if (session.cancelled) break;
