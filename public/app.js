@@ -396,14 +396,14 @@ function playChannel(name, url) {
     const token = playToken;
     iptvVideo.addEventListener('loadedmetadata', () => {
       if (token === playToken && isFinite(iptvVideo.duration) && iptvVideo.duration > 600) {
-        dbg('uzun süreli dosya: film oynatıcıya geçiliyor');
-        playMovie(url, name);
+        dbg('uzun süreli dosya: film moduna alındı');
+        playMovie(url, name, { adopt: true });
       }
     }, { once: true });
     iptvVideo.addEventListener('error', () => {
       if (token === playToken && iptvVideo.getAttribute('src')) {
-        dbg('tarayıcı açamadı: film oynatıcıyla (sunucu) deneniyor');
-        playMovie(url, name);
+        dbg('tarayıcı açamadı: sunucu üzerinden deneniyor');
+        playMovie(url, name, { server: true });
       }
     }, { once: true });
   }
@@ -1618,34 +1618,51 @@ function canDirectPlay(info, url) {
   return true;
 }
 
-async function playMovie(url, label) {
-  stopPlayback();
-  const token = playToken;
-  setMovieMode(true);
-  Object.assign(movie, { url, label, audio: 0, offset: 0, mode: 'direct', pendingAt: 0, info: null, sessionSubs: [], lastSave: Date.now() });
-  iptvVideo.dataset.title = label;
-  document.getElementById('mv-title').textContent = label;
-  setStatus('Film açılıyor…');
-  updateMovieUi();
-  showMovieControls();
-  let info = null;
-  try { const r = await fetch('/api/media/info?src=' + encodeURIComponent(url)); if (r.ok) info = await r.json(); } catch {}
-  if (token !== playToken) return;
-  movie.info = info;
-  // Türkçe altyazı varsa kendiliğinden aç
-  const trSub = info && info.subs.find(x => x.text && /^(tur|tr)$/i.test(x.lang));
-  if (trSub) movie.sub = { kind: 'stream', n: trSub.n };
+// Tarayıcının açamayacağı türler doğrudan sunucuya; diğerleri önce olduğu gibi (doğrudan) oynar.
+// Sağlayıcılar çoğu zaman tek bağlantıya izin verdiği için film açılırken sunucuya ayrıca
+// bağlanılmaz; dosya bilgisi (ses dilleri, altyazılar) ancak menü açılınca alınır.
+const SERVER_EXT = /^(mkv|avi|wmv|flv|mpg|mpeg|m2ts|vob|divx|ts)$/i;
+function movieExt(url) { return ((innerUrl(url).match(/\.([a-z0-9]{2,4})(\?|#|$)/i) || [])[1] || '').toLowerCase(); }
+function resumeAt(url) {
   const saved = (appState.resumeMovies || {})[url];
   let at = saved && saved.position > 10 ? saved.position : 0;
   if (!at && appState.resumeXtream && appState.resumeXtream.url === url && appState.resumeXtream.position > 10) at = appState.resumeXtream.position;
+  return at;
+}
+// opts.adopt: zaten oynayan dosyayı film moduna al (yeniden başlatma)
+// opts.server: tarayıcı açamadı, sunucu üzerinden oynat
+async function playMovie(url, label, opts = {}) {
+  if (!opts.adopt) stopPlayback();
+  setMovieMode(true);
+  Object.assign(movie, { url, label, audio: 0, offset: 0, mode: 'direct', pendingAt: null, info: null, infoLoaded: false,
+    subAuto: false, sessionSubs: [], lastSave: Date.now() });
+  iptvVideo.dataset.title = label;
+  document.getElementById('mv-title').textContent = label;
+  const at = resumeAt(url);
+  if (opts.adopt) {
+    if (at > 0 && iptvVideo.currentTime < 5) { try { iptvVideo.currentTime = at; showToast('Kaldığın yerden: ' + fmtTime(at)); } catch {} }
+    updateMovieUi();
+    showMovieControls();
+    return;
+  }
   if (at) showToast('Kaldığın yerden: ' + fmtTime(at));
-  if (canDirectPlay(info, url) && !movie.sub) movieDirect(at);
-  else await movieSession(at);
+  updateMovieUi();
+  showMovieControls();
+  if (opts.server || SERVER_EXT.test(movieExt(url))) await movieSession(at);
+  else movieDirect(at);
+}
+// Dosya bilgisi: süre, ses dilleri, altyazılar (bir kere)
+async function ensureMovieInfo() {
+  if (movie.infoLoaded) return movie.info;
+  const url = movie.url;
+  try { const r = await fetch('/api/media/info?src=' + encodeURIComponent(url)); if (r.ok && url === movie.url) movie.info = await r.json(); } catch {}
+  if (url === movie.url) movie.infoLoaded = true;
+  return movie.info;
 }
 
 function movieDirect(at) {
   movie.mode = 'direct'; movie.offset = 0; movie.pendingAt = null;
-  iptvVideo.src = playableUrl(movie.url);
+  iptvVideo.src = movie.url;
   if (at > 0) iptvVideo.addEventListener('loadedmetadata', () => { try { iptvVideo.currentTime = at; } catch {} }, { once: true });
   iptvVideo.play().catch(() => {});
   setStatus('');
@@ -1669,6 +1686,13 @@ async function movieSession(at, retried) {
   renderCues();
   setStatus(at ? fmtTime(at) + ' konumundan açılıyor…' : 'Film hazırlanıyor…');
   updateMovieUi();
+  await ensureMovieInfo();
+  if (token !== playToken || my !== movie.token) return;
+  if (!movie.subAuto) {
+    movie.subAuto = true;
+    const trSub = movie.info && !movie.sub && movie.info.subs.find(x => x.text && /^(tur|tr)$/i.test(x.lang));
+    if (trSub) movie.sub = { kind: 'stream', n: trSub.n };
+  }
   let textSubs = movie.info ? movie.info.subs.filter(x => x.text).map(x => x.n) : [];
   if (movie.sub && movie.sub.kind === 'stream') textSubs = [movie.sub.n, ...textSubs.filter(n => n !== movie.sub.n)];
   const q = new URLSearchParams({ src: movie.url, live: '0', mode: 'auto', start: String(Math.floor(at)),
@@ -1822,7 +1846,7 @@ function updateMovieUi() {
   if (!mvDragging && dur) mvSeek.value = String(Math.round(Math.min(1, now / dur) * 1000));
   document.getElementById('mv-play').textContent = iptvVideo.paused && movie.pendingAt == null ? '▶' : '⏸';
   const info = movie.info;
-  document.getElementById('mv-audio-btn').style.display = info && info.audio.length > 1 ? '' : 'none';
+  document.getElementById('mv-audio-btn').style.display = info && info.audio.length < 2 ? 'none' : '';
   document.getElementById('mv-sub-btn').classList.toggle('on', !!movie.sub);
 }
 function showMovieControls() {
@@ -1834,8 +1858,17 @@ function showMovieControls() {
   }, 4000);
 }
 function hideMovieMenu() { mvMenu.classList.remove('open'); mvMenu.dataset.kind = ''; }
-function openMovieMenu(kind, keep) {
+async function openMovieMenu(kind, keep) {
   if (!keep && mvMenu.dataset.kind === kind && mvMenu.classList.contains('open')) return hideMovieMenu();
+  if (!movie.infoLoaded) {
+    mvMenu.dataset.kind = kind;
+    mvMenu.innerHTML = '<button class="mv-opt" disabled>Yükleniyor…</button>';
+    mvMenu.classList.add('open');
+    showMovieControls();
+    await ensureMovieInfo();
+    if (mvMenu.dataset.kind !== kind) return;
+    updateMovieUi();
+  }
   mvMenu.dataset.kind = kind;
   mvMenu.innerHTML = '';
   const add = (text, on, fn, parent) => {
@@ -1848,7 +1881,16 @@ function openMovieMenu(kind, keep) {
   };
   const info = movie.info;
   if (kind === 'audio') {
-    if (!info || !info.audio.length) add('Ses bilgisi yok', false, null);
+    const nt = iptvVideo.audioTracks;
+    if ((!info || !info.audio.length) && nt && nt.length > 1) {
+      for (let i = 0; i < nt.length; i++) {
+        const t = nt[i];
+        add(langName(t.language) || t.label || 'Ses ' + (i + 1), t.enabled, () => {
+          hideMovieMenu();
+          for (let j = 0; j < nt.length; j++) nt[j].enabled = j === i;
+        });
+      }
+    } else if (!info || !info.audio.length) add('Ses bilgisi alınamadı', false, null);
     else info.audio.forEach(a => add(audioLabel(a), a.n === movie.audio, () => { hideMovieMenu(); selectAudio(a.n); }));
   } else {
     add('Kapalı', !movie.sub, () => { hideMovieMenu(); selectSub(null); });
