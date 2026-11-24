@@ -1036,7 +1036,7 @@ function buildArgs({ input, input2, ua, isRemote, live, transcode, hw, dir, lowr
     args.push('-hls_time', transcode ? '1' : '6', '-hls_list_size', transcode ? '40' : '15', '-hls_delete_threshold', '10',
       '-hls_flags', 'delete_segments+independent_segments+omit_endlist');
   } else {
-    args.push('-hls_time', '6', '-hls_list_size', '0', '-hls_playlist_type', 'event',
+    args.push('-hls_time', input2 ? '2' : '6', '-hls_list_size', '0', '-hls_playlist_type', 'event',
       '-hls_flags', 'independent_segments');
   }
   args.push(path.join(dir, 'index.m3u8'));
@@ -1247,9 +1247,39 @@ app.get('/api/yt/list', async (req, res) => {
 
 // Video bilgisi ve en uygun biçimler (H.264 görüntü + AAC ses). 1 saat saklanır (adresler ~6 saat geçerli)
 const ytCache = new Map();
-async function ytRaw(id) {
+const ytInflight = new Map();
+// Aynı video aynı anda iki kez hazırlanmasın (önceden hazırlama + tıklama)
+function ytRaw(id) {
   const c = ytCache.get(id);
-  if (c && Date.now() - c.t < 3600000) return c.j;
+  if (c && Date.now() - c.t < 3600000) return Promise.resolve(c.j);
+  if (ytInflight.has(id)) return ytInflight.get(id);
+  const p = ytRawFetch(id).finally(() => ytInflight.delete(id));
+  ytInflight.set(id, p);
+  return p;
+}
+// Önceden hazırlama: listedeki ilk videolar arka planda (sırayla, sunucuyu yormadan)
+const ytPrefetchQueue = [];
+let ytPrefetching = false;
+function ytPrefetch(ids, front) {
+  ids = ids.filter(id => YT_ID.test(id) && !ytCache.has(id) && !ytInflight.has(id) && !ytPrefetchQueue.includes(id));
+  if (front) ytPrefetchQueue.unshift(...ids); else ytPrefetchQueue.push(...ids);
+  ytPrefetchQueue.splice(12);
+  if (ytPrefetching) return;
+  ytPrefetching = true;
+  (async () => {
+    while (ytPrefetchQueue.length) {
+      const id = ytPrefetchQueue.shift();
+      try { await ytRaw(id); } catch {}
+    }
+    ytPrefetching = false;
+  })();
+}
+app.post('/api/yt/prefetch', (req, res) => {
+  const ids = (Array.isArray(req.body && req.body.ids) ? req.body.ids : []).map(String).slice(0, 6);
+  ytPrefetch(ids, !!(req.body && req.body.now));
+  res.json({ ok: true });
+});
+async function ytRawFetch(id) {
   // Videoyu hesapsız al: giriş yapılmış istekte YouTube biçimleri farklı veriyor ve çoğu zaman
   // oynatılabilir biçim çıkmıyor ("Requested format is not available"). Hesap sadece yedek (yaş sınırı vb.)
   const url = `https://www.youtube.com/watch?v=${id}`;

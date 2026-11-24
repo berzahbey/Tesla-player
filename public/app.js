@@ -2185,6 +2185,14 @@ if ('mediaSession' in navigator) {
 // Arama sunucuda yt-dlp ile yapılır; videolar film oynatıcıda açılır (sarma, altyazı, kilit ekranında ses)
 const ytList = document.getElementById('yt-list');
 const ytQ = document.getElementById('yt-q');
+// Listede ilk görünen videoları sunucu arka planda hazırlasın (tıklayınca hemen açılsın)
+const ytPrefetched = new Set();
+function ytPrefetch(ids, now) {
+  ids = ids.filter(id => id && !ytPrefetched.has(id));
+  if (!ids.length) return;
+  ids.forEach(id => ytPrefetched.add(id));
+  saveStateField('/api/yt/prefetch', { ids, now: !!now });
+}
 function ytEsc(t) { return String(t || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function ytItem(v, progress) {
   const el = document.createElement('div');
@@ -2194,6 +2202,8 @@ function ytItem(v, progress) {
   const bar = progress ? `<span class="yt-progress" style="width:${Math.min(100, Math.round(progress * 100))}%"></span>` : '';
   el.innerHTML = `<div class="yt-thumb"><img loading="lazy" src="${ytEsc(v.thumb)}" alt="">${badge}${bar}</div>` +
     `<div class="yt-meta"><div class="yt-title">${ytEsc(v.title)}</div><div class="yt-ch">${ytEsc(v.channel)}</div></div>`;
+  // Parmak değer değmez hazırlamaya başla
+  el.addEventListener('pointerdown', () => ytPrefetch([v.id], true), { passive: true });
   el.onclick = () => {
     ytPlay(v);
     document.querySelectorAll('.yt-item').forEach(x => x.classList.remove('playing'));
@@ -2228,6 +2238,7 @@ function showYtHome() {
     ytList.appendChild(ytItem({ id, title: r.label, channel: fmtTime(r.position) + (r.duration ? ' / ' + fmtTime(r.duration) : ''),
       thumb: `https://i.ytimg.com/vi/${id}/mqdefault.jpg` }, r.duration ? r.position / r.duration : 0));
   });
+  ytPrefetch(items.slice(0, 3).map(k => k.slice(3)));
 }
 async function ytSearch(q) {
   ytStack = [];
@@ -2245,6 +2256,7 @@ async function ytSearch(q) {
   ytList.appendChild(home);
   if (!r.length) { ytList.insertAdjacentHTML('beforeend', '<p class="hint">Sonuç bulunamadı.</p>'); return; }
   r.forEach(v => ytList.appendChild(ytItem(v)));
+  ytPrefetch(r.filter(v => !v.live).slice(0, 4).map(v => v.id));
   if (r.length === 1 && r[0].link) ytList.querySelector('.yt-item').click();
 }
 document.getElementById('yt-search-form').addEventListener('submit', e => {
@@ -2311,6 +2323,7 @@ async function ytRender(v) {
   if (r.error) { ytList.insertAdjacentHTML('beforeend', `<p class="hint yt-err">${ytEsc(r.error)}</p>`); return; }
   if (!r.items.length) { ytList.insertAdjacentHTML('beforeend', '<p class="hint">Bu liste boş.</p>'); return; }
   r.items.forEach(it => ytList.appendChild(it.type === 'video' ? ytItem(it) : ytListItem(it)));
+  ytPrefetch(r.items.filter(it => it.type === 'video' && !it.live).slice(0, 4).map(it => it.id));
 }
 document.getElementById('yt-cookie-pick').addEventListener('click', () => document.getElementById('yt-cookie-file').click());
 document.getElementById('yt-cookie-file').addEventListener('change', async e => {
