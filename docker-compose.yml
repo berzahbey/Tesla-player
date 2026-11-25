@@ -19,7 +19,9 @@ services:
       - /dev/dri:/dev/dri
     volumes:
       - /DATA/Media:/media:ro
-      - ./data:/app/data
+      # Ayarlar, listeler, favoriler, hesaplar burada: KALICI bir yol olmalı.
+      # (CasaOS'ta ./data geçici /tmp klasörüne bağlanıyor, sunucu açılışında uygulama başlamıyordu)
+      - /DATA/AppData/tesla-player/data:/app/data
 
 x-casaos:
   architectures:
